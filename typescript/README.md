@@ -1,6 +1,6 @@
 # touchmark
 
-Official TypeScript client for the [Touchmark API](https://api.touchmark.dev/docs): email validation and mailbox checks, sender readiness, IP lookup and phone number validation. ESM, typed, no runtime dependencies; Node 18+, edge runtimes, Deno and Bun.
+Official TypeScript client for the [Touchmark API](https://api.touchmark.dev/docs): email validation and mailbox checks, sender readiness, IP lookup and phone number validation. ESM, typed, no runtime dependencies; Node 20+, edge runtimes, Deno and Bun.
 
 ```bash
 npm install touchmark
@@ -21,7 +21,8 @@ const done = check.status === "done" ? check : await tm.email.waitForVerificatio
 
 - Every call costs the credits of the API call it makes; see the [API reference](https://api.touchmark.dev/docs).
 - Errors throw `TouchmarkError` with `status`, `code`, `detail`, `requestId` and `retryAfter`.
-- Only `429` and `503 upstream_unavailable` answers are retried, at most twice (the API charges for neither); a request that may already have been charged is never retried.
+- Each charged call sends an `Idempotency-Key` (a random one, or yours: `tm.ip.lookup(body, { idempotencyKey })`), so the API charges it at most once.
+- Network errors and `429`, `409 idempotency_key_in_use`, `500`, `502`, `503` and `504` answers are retried with the same key and body, at most twice; other errors are not.
 - If you show IP country or network data to anyone, keep the credit "IP Geolocation by DB-IP" (https://db-ip.com) next to it.
 
 Using the Touchmark API is subject to the [Terms of Service](https://touchmark.dev/legal/terms) and the [Acceptable Use Policy](https://touchmark.dev/legal/acceptable-use). The client sends requests only to the API base URL and includes no telemetry.

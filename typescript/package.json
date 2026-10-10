@@ -1,6 +1,6 @@
 {
   "name": "touchmark",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Official TypeScript client for the Touchmark API: email, IP and phone validation.",
   "license": "MIT",
   "author": "Icomi",
@@ -19,7 +19,7 @@
   ],
   "type": "module",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "exports": {
     ".": {

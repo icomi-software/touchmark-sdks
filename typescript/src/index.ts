@@ -7,7 +7,11 @@ import type * as T from "./gen/types.gen.js"
 export type * from "./gen/types.gen.js"
 
 export const DEFAULT_BASE_URL = "https://api.touchmark.dev"
-/** Retries of a 429 or a 503 upstream_unavailable: the API charges for neither. */
+/**
+ * Retries of a call that failed on the way or got a 429, 409
+ * idempotency_key_in_use or 5xx answer. Charged calls carry an
+ * Idempotency-Key, so a retry is charged at most once.
+ */
 export const DEFAULT_MAX_RETRIES = 2
 /** The API's longest long poll for a mailbox check. */
 export const MAX_WAIT_SECONDS = 10
@@ -18,10 +22,20 @@ export interface TouchmarkOptions {
   apiKey?: string
   /** Defaults to https://api.touchmark.dev. */
   baseUrl?: string
-  /** Retries of 429 and 503 upstream_unavailable answers; 0 turns them off. */
+  /** Retries of network errors and of 429, 409 in-use and 5xx answers; 0 turns them off. */
   maxRetries?: number
   /** A fetch implementation; defaults to the global fetch. */
   fetch?: typeof fetch
+}
+
+/** Options of a charged call. */
+export interface CallOptions {
+  /**
+   * Sent as the Idempotency-Key header: the API charges the call at most once
+   * per key and body for 24 hours. Defaults to a new random key per call, the
+   * same on each retry; pass your own to retry safely across processes.
+   */
+  idempotencyKey?: string
 }
 
 /** Any answer that is not 2xx, read from the API's problem document. */
@@ -77,8 +91,12 @@ function verificationPath(verificationId: string): string {
   return `/v1/email/verify/${verificationId}`
 }
 
-function retryable(status: number, code: string): boolean {
-  return status === 429 || (status === 503 && code === "upstream_unavailable")
+function retryable(error: TouchmarkError): boolean {
+  return (
+    error.status === 429 ||
+    (error.status === 409 && error.code === "idempotency_key_in_use") ||
+    [500, 502, 503, 504].includes(error.status)
+  )
 }
 
 const sleep = (seconds: number) =>
@@ -105,22 +123,35 @@ export class Touchmark {
 
   readonly email = {
     /** Syntax, MX, disposable and free-provider domains, role accounts. 1 credit. */
-    validate: (body: T.ValidateEmailData["body"]) =>
+    validate: (body: T.ValidateEmailData["body"], options: CallOptions = {}) =>
       this.#request<T.ValidateEmailResponses[200]>(
         "POST",
         "/v1/email/validate",
         body,
+        undefined,
+        options.idempotencyKey,
       ),
     /** Up to 100 addresses, answered in order. 1 credit each. */
-    validateBatch: (body: T.ValidateEmailBatchData["body"]) =>
+    validateBatch: (
+      body: T.ValidateEmailBatchData["body"],
+      options: CallOptions = {},
+    ) =>
       this.#request<T.ValidateEmailBatchResponses[200]>(
         "POST",
         "/v1/email/validate/batch",
         body,
+        undefined,
+        options.idempotencyKey,
       ),
     /** Starts a mailbox check; a queued answer carries its id. Up to 5 credits. */
-    verify: (body: T.VerifyEmailData["body"]) =>
-      this.#request<T.VerifyEmailResponse>("POST", "/v1/email/verify", body),
+    verify: (body: T.VerifyEmailData["body"], options: CallOptions = {}) =>
+      this.#request<T.VerifyEmailResponse>(
+        "POST",
+        "/v1/email/verify",
+        body,
+        undefined,
+        options.idempotencyKey,
+      ),
     /** A mailbox check, waiting up to `wait` seconds (at most 10) for it to finish. Free. */
     getVerification: async (
       verificationId: string,
@@ -151,41 +182,64 @@ export class Touchmark {
 
   readonly domain = {
     /** The domain's DNS against the Gmail, Yahoo and Microsoft sender rules. 2 credits. */
-    senderReadiness: (body: T.SenderReadinessData["body"]) =>
+    senderReadiness: (
+      body: T.SenderReadinessData["body"],
+      options: CallOptions = {},
+    ) =>
       this.#request<T.SenderReadinessResponses[200]>(
         "POST",
         "/v1/domain/sender-readiness",
         body,
+        undefined,
+        options.idempotencyKey,
       ),
   }
 
   readonly ip = {
     /** Country, network owner, hosting company and Tor exit. 1 credit. */
-    lookup: (body: T.LookupIpData["body"]) =>
-      this.#request<T.LookupIpResponses[200]>("POST", "/v1/ip/lookup", body),
+    lookup: (body: T.LookupIpData["body"], options: CallOptions = {}) =>
+      this.#request<T.LookupIpResponses[200]>(
+        "POST",
+        "/v1/ip/lookup",
+        body,
+        undefined,
+        options.idempotencyKey,
+      ),
     /** Up to 100 addresses, answered in order. 1 credit each. */
-    lookupBatch: (body: T.LookupIpBatchData["body"]) =>
+    lookupBatch: (
+      body: T.LookupIpBatchData["body"],
+      options: CallOptions = {},
+    ) =>
       this.#request<T.LookupIpBatchResponses[200]>(
         "POST",
         "/v1/ip/lookup/batch",
         body,
+        undefined,
+        options.idempotencyKey,
       ),
   }
 
   readonly phone = {
     /** Numbering-plan validity, formats, country and line type. 1 credit. */
-    validate: (body: T.ValidatePhoneData["body"]) =>
+    validate: (body: T.ValidatePhoneData["body"], options: CallOptions = {}) =>
       this.#request<T.ValidatePhoneResponses[200]>(
         "POST",
         "/v1/phone/validate",
         body,
+        undefined,
+        options.idempotencyKey,
       ),
     /** Up to 100 numbers, answered in order. 1 credit each. */
-    validateBatch: (body: T.ValidatePhoneBatchData["body"]) =>
+    validateBatch: (
+      body: T.ValidatePhoneBatchData["body"],
+      options: CallOptions = {},
+    ) =>
       this.#request<T.ValidatePhoneBatchResponses[200]>(
         "POST",
         "/v1/phone/validate/batch",
         body,
+        undefined,
+        options.idempotencyKey,
       ),
   }
 
@@ -199,6 +253,7 @@ export class Touchmark {
     path: string,
     body?: unknown,
     query?: Query,
+    idempotencyKey?: string,
   ): Promise<R> {
     const url = new URL(this.#baseUrl + path)
     for (const [name, value] of Object.entries(query ?? {})) {
@@ -208,20 +263,31 @@ export class Touchmark {
       Authorization: `Bearer ${this.#apiKey}`,
       Accept: "application/json",
     }
-    if (body !== undefined) headers["Content-Type"] = "application/json"
+    // Every POST is charged: its key and bytes stay the same on each retry, so
+    // the API charges it at most once.
+    const payload = body === undefined ? undefined : JSON.stringify(body)
+    if (payload !== undefined) {
+      headers["Content-Type"] = "application/json"
+      headers["Idempotency-Key"] =
+        idempotencyKey ?? globalThis.crypto.randomUUID()
+    }
     for (let attempt = 0; ; attempt++) {
-      // A network error is not retried: a POST may already have been charged.
-      const response = await this.#fetch(url, {
-        method,
-        headers,
-        redirect: "manual", // never send the key or body to another origin
-        body: body === undefined ? undefined : JSON.stringify(body),
-      })
+      let response: Response
+      try {
+        response = await this.#fetch(url, {
+          method,
+          headers,
+          redirect: "manual", // never send the key or body to another origin
+          body: payload,
+        })
+      } catch (error) {
+        if (attempt >= this.#maxRetries) throw error
+        await sleep(attempt + 1)
+        continue
+      }
       if (response.ok) return (await response.json()) as R
       const error = await toError(response)
-      if (attempt >= this.#maxRetries || !retryable(error.status, error.code)) {
-        throw error
-      }
+      if (attempt >= this.#maxRetries || !retryable(error)) throw error
       await sleep(
         Math.min(error.retryAfter ?? attempt + 1, MAX_RETRY_DELAY_SECONDS),
       )

@@ -5,6 +5,16 @@ import { DEFAULT_BASE_URL, Touchmark, TouchmarkError } from "../src/index.js"
 type Call = { url: URL; init: RequestInit }
 
 const ID = "6f1c2c4e-0d2b-4f5e-9a3b-1c2d3e4f5a6b"
+const UUID_V4 =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+
+function header(init: RequestInit | undefined, name: string) {
+  return (init?.headers as Record<string, string> | undefined)?.[
+    Object.keys(init?.headers ?? {}).find(
+      (key) => key.toLowerCase() === name,
+    ) ?? ""
+  ]
+}
 
 function json(
   status: number,
@@ -206,7 +216,7 @@ describe("errors and retries", () => {
       new Response("<html>bad gateway</html>", { status: 502 }),
     )
     await expect(
-      new Touchmark({ apiKey: "k", fetch }).account.get(),
+      new Touchmark({ apiKey: "k", fetch, maxRetries: 0 }).account.get(),
     ).rejects.toMatchObject({ status: 502, code: "http_502", detail: null })
   })
 
@@ -240,7 +250,7 @@ describe("errors and retries", () => {
   it("names an error body that is not an object by its status", async () => {
     const { fetch } = fakeFetch(json(500, null))
     await expect(
-      new Touchmark({ apiKey: "k", fetch }).account.get(),
+      new Touchmark({ apiKey: "k", fetch, maxRetries: 0 }).account.get(),
     ).rejects.toMatchObject({ status: 500, code: "http_500", detail: null })
   })
 
@@ -280,9 +290,10 @@ describe("errors and retries", () => {
   })
 
   it.each([
-    ["a 500", problem(500, "internal_error")],
     ["a 402", problem(402, "insufficient_credits")],
-    ["any other 503", problem(503, "maintenance")],
+    ["a 400", problem(400, "invalid_idempotency_key")],
+    ["a reused key", problem(422, "idempotency_key_reused")],
+    ["another 409", problem(409, "conflict")],
   ])("does not retry %s", async (_, answer) => {
     const { calls, fetch } = fakeFetch(answer, json(200, {}))
     await expect(
@@ -291,15 +302,73 @@ describe("errors and retries", () => {
     expect(calls).toHaveLength(1)
   })
 
-  it("does not retry a network error", async () => {
+  it.each([
+    ["a 500", problem(500, "internal_error")],
+    ["a 502", new Response("bad gateway", { status: 502 })],
+    ["any 503", problem(503, "maintenance")],
+    ["a 504", new Response("timeout", { status: 504 })],
+    [
+      "a key in use",
+      problem(409, "idempotency_key_in_use", { "retry-after": "0" }),
+    ],
+    ["a network error", new TypeError("network down")],
+  ])("retries %s with the same key and body", async (_, answer) => {
+    vi.useFakeTimers()
+    const { calls, fetch } = fakeFetch(answer, json(200, { ok: true }))
+    const pending = new Touchmark({ apiKey: "k", fetch }).email.validate({
+      email: "a@b.co",
+    })
+    await vi.advanceTimersByTimeAsync(1000)
+    await expect(pending).resolves.toEqual({ ok: true })
+    expect(calls).toHaveLength(2)
+    const [first, second] = calls.map((call) => call.init)
+    expect(second?.body).toBe(first?.body)
+    expect(header(second, "idempotency-key")).toBe(
+      header(first, "idempotency-key"),
+    )
+  })
+
+  it("throws the network error after the last retry", async () => {
+    vi.useFakeTimers()
     const { calls, fetch } = fakeFetch(
       new TypeError("network down"),
-      json(200, {}),
+      new TypeError("network down"),
+      new TypeError("network down"),
     )
-    await expect(
-      new Touchmark({ apiKey: "k", fetch }).email.validate({ email: "a@b.co" }),
-    ).rejects.toThrow("network down")
-    expect(calls).toHaveLength(1)
+    const pending = new Touchmark({ apiKey: "k", fetch }).email
+      .validate({ email: "a@b.co" })
+      .catch((e: unknown) => e)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(await pending).toBeInstanceOf(TypeError)
+    expect(calls).toHaveLength(3)
+  })
+
+  it("sends a new random Idempotency-Key with each charged call", async () => {
+    const { calls, fetch } = fakeFetch(json(200, {}), json(200, {}))
+    const tm = new Touchmark({ apiKey: "k", fetch })
+    await tm.email.validate({ email: "a@b.co" })
+    await tm.email.validate({ email: "a@b.co" })
+    const [first, second] = calls.map((call) =>
+      header(call.init, "idempotency-key"),
+    )
+    expect(first).toMatch(UUID_V4)
+    expect(second).toMatch(UUID_V4)
+    expect(second).not.toBe(first)
+  })
+
+  it("sends the caller's own Idempotency-Key", async () => {
+    const { calls, fetch } = fakeFetch(json(200, {}))
+    await new Touchmark({ apiKey: "k", fetch }).ip.lookup(
+      { ip: "192.0.2.1" },
+      { idempotencyKey: "order-42" },
+    )
+    expect(header(calls[0]?.init, "idempotency-key")).toBe("order-42")
+  })
+
+  it("sends no Idempotency-Key with a free GET", async () => {
+    const { calls, fetch } = fakeFetch(json(200, {}))
+    await new Touchmark({ apiKey: "k", fetch }).account.get()
+    expect(header(calls[0]?.init, "idempotency-key")).toBeUndefined()
   })
 
   it("does not follow a redirect", async () => {
