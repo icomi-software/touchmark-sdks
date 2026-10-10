@@ -43,16 +43,20 @@ Expected: no diff. A diff means production serves a different document: deploy `
 
 ## Every release
 
-1. Bump the version: `typescript/package.json` (and `npm install` to update the lock file), `python/pyproject.toml` (and `uv lock` in `python/` to update its lock file; `__version__` reads it), and/or `userAgent` in `go/touchmark.go`. Commit and push.
-2. Push the tag:
+1. Release TypeScript 0.2.0, Python 0.2.0 or Go v0.1.0 only after validation-api's Idempotency-Key support is deployed, or a retried POST could be charged twice. Check:
    ```bash
-   git tag ts-v0.1.1 && git push origin ts-v0.1.1   # TypeScript
-   git tag py-v0.1.0 && git push origin py-v0.1.0   # Python (its first release goes this way)
+   curl -s https://api.touchmark.dev/v1/openapi.json | grep -c Idempotency-Key
+   ```
+   Expected: a number above 0. Then run `bash scripts/sync-openapi.sh && bash scripts/generate.sh`, review the diff, run every package's tests, commit, and only then push tags.
+2. Bump the version: `typescript/package.json` (and `npm install` to update the lock file), `python/pyproject.toml` (and `uv lock` in `python/` to update its lock file; `__version__` reads it), and/or `userAgent` in `go/touchmark.go`. Commit and push.
+3. Push the tag:
+   ```bash
+   git tag ts-v0.2.0 && git push origin ts-v0.2.0   # TypeScript
+   git tag py-v0.2.0 && git push origin py-v0.2.0   # Python
    git tag go/v0.1.0 && git push origin go/v0.1.0   # Go
    ```
    A Go module has no registry: its tag is the release. Expected, a few minutes later: `GOPROXY=https://proxy.golang.org go list -m github.com/marcin-marciszewski/touchmark-sdks/go@v0.1.0` prints the version.
-   Never push `ts-v0.1.0`: you published 0.1.0 to npm by hand, so its release run would fail at `npm publish` (the version exists). The first TypeScript tag is `ts-v0.1.1`.
-3. Approve the run in the environment if you added yourself as a reviewer. Expected: the workflow ends green, and `npm view touchmark version` or `pip index versions touchmark` shows the new version. npm shows a "Provenance" badge on releases published this way.
+4. Approve the run in the environment if you added yourself as a reviewer. Expected: the workflow ends green, and `npm view touchmark version` or `pip index versions touchmark` shows the new version. npm shows a "Provenance" badge on releases published this way.
 
 ## After an API change
 
@@ -60,10 +64,10 @@ Run `scripts/sync-openapi.sh` only once the API change is deployed to production
 
 ```bash
 bash scripts/sync-openapi.sh   # downloads https://api.touchmark.dev/v1/openapi.json
-bash scripts/generate.sh       # regenerates the TypeScript types and Python models
+bash scripts/generate.sh       # regenerates the TypeScript types, Python models and Go types
 ```
 
-Review the diff, run the tests (`npm test` in `typescript/`, `uv run pytest` in `python/`), and release a new version.
+Review the diff, run the tests (`npm test` in `typescript/`, `uv run pytest` in `python/`, `go test ./...` in `go/`), and release a new version.
 
 ## Optional: a real call
 

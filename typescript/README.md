@@ -22,6 +22,7 @@ const done = check.status === "done" ? check : await tm.email.waitForVerificatio
 - Every call costs the credits of the API call it makes; see the [API reference](https://api.touchmark.dev/docs).
 - Errors throw `TouchmarkError` with `status`, `code`, `detail`, `requestId` and `retryAfter`.
 - Each charged call sends an `Idempotency-Key` (a random one, or yours: `tm.ip.lookup(body, { idempotencyKey })`), so the API charges it at most once.
+- A key belongs to one request: reuse it only to retry that same call, with the same SDK. Another body or endpoint, or more than 10 replays, answers `422 idempotency_key_reused`.
 - Network errors and `429`, `409 idempotency_key_in_use`, `500`, `502`, `503` and `504` answers are retried with the same key and body, at most twice; other errors are not.
 - If you show IP country or network data to anyone, keep the credit "IP Geolocation by DB-IP" (https://db-ip.com) next to it.
 

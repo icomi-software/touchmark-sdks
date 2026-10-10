@@ -227,10 +227,13 @@ func TestWaitForVerificationReturnsTheLastAnswerWhenTimeIsUp(t *testing.T) {
 func TestAProblemDocumentBecomesAnError(t *testing.T) {
 	api := &fakeAPI{handlers: []http.HandlerFunc{problem(402, "insufficient_credits")}}
 	c, _ := newClient(t, api, Options{})
-	_, err := c.Email.Validate(context.Background(), ValidateRequest{Email: "a@b.co"})
+	answer, err := c.Email.Validate(context.Background(), ValidateRequest{Email: "a@b.co"})
 	var apiErr *Error
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("err = %v", err)
+	}
+	if answer != nil {
+		t.Fatalf("answer = %+v, want nil", answer)
 	}
 	if apiErr.Status != 402 || apiErr.Code != "insufficient_credits" || apiErr.Detail != "insufficient_credits detail" ||
 		apiErr.RequestID != "req_123" || apiErr.RetryAfter != -1 {

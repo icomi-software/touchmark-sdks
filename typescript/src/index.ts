@@ -269,10 +269,11 @@ export class Touchmark {
     if (payload !== undefined) {
       headers["Content-Type"] = "application/json"
       headers["Idempotency-Key"] =
-        idempotencyKey ?? globalThis.crypto.randomUUID()
+        idempotencyKey || globalThis.crypto.randomUUID()
     }
     for (let attempt = 0; ; attempt++) {
       let response: Response
+      let text = ""
       try {
         response = await this.#fetch(url, {
           method,
@@ -280,12 +281,14 @@ export class Touchmark {
           redirect: "manual", // never send the key or body to another origin
           body: payload,
         })
+        // A body lost on the wire is a network error: retry with the same key.
+        if (response.ok) text = await response.text()
       } catch (error) {
         if (attempt >= this.#maxRetries) throw error
         await sleep(attempt + 1)
         continue
       }
-      if (response.ok) return (await response.json()) as R
+      if (response.ok) return JSON.parse(text) as R
       const error = await toError(response)
       if (attempt >= this.#maxRetries || !retryable(error)) throw error
       await sleep(

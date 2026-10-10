@@ -61,6 +61,7 @@ fmt.Println(answer.Result)
 - Every call costs the credits of the API call it makes; see the API reference.
 - Errors raise `TouchmarkError` with `status`, `code`, `detail`, `request_id` and `retry_after` (`*touchmark.Error` in Go).
 - Each charged call sends an `Idempotency-Key`: a random one, or one you pass. The API charges a call at most once per key and body for 24 hours.
+- A key belongs to one request: reuse it only to retry that same call, with the same SDK. Another body or endpoint, or more than 10 replays, answers `422 idempotency_key_reused`.
 - Network errors and `429`, `409 idempotency_key_in_use`, `500`, `502`, `503` and `504` answers are retried with the same key and body, at most twice, after `Retry-After` or 1 then 2 seconds (never more than 30). Other errors are not retried.
 - `email.verify` returns at once; `email.wait_for_verification` (`waitForVerification` in TypeScript) waits for a mailbox check to finish.
 

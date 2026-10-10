@@ -356,6 +356,43 @@ describe("errors and retries", () => {
     expect(second).not.toBe(first)
   })
 
+  it("sends a random Idempotency-Key when the caller's is empty", async () => {
+    const { calls, fetch } = fakeFetch(json(200, {}))
+    await new Touchmark({ apiKey: "k", fetch }).ip.lookup(
+      { ip: "192.0.2.1" },
+      { idempotencyKey: "" },
+    )
+    expect(header(calls[0]?.init, "idempotency-key")).toMatch(UUID_V4)
+  })
+
+  it("retries a 2xx whose body is lost, with the same key and bytes", async () => {
+    vi.useFakeTimers()
+    const lost = json(200, {})
+    lost.text = () => Promise.reject(new TypeError("terminated"))
+    const { calls, fetch } = fakeFetch(lost, json(200, { ok: true }))
+    const pending = new Touchmark({ apiKey: "k", fetch }).email.validate({
+      email: "a@b.co",
+    })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(await pending).toEqual({ ok: true })
+    expect(calls).toHaveLength(2)
+    expect(header(calls[1]?.init, "idempotency-key")).toBe(
+      header(calls[0]?.init, "idempotency-key"),
+    )
+    expect(calls[1]?.init.body).toBe(calls[0]?.init.body)
+  })
+
+  it("does not retry a 2xx whose body is not JSON", async () => {
+    const { calls, fetch } = fakeFetch(
+      new Response("<html>", { status: 200 }),
+      json(200, {}),
+    )
+    await expect(
+      new Touchmark({ apiKey: "k", fetch }).email.validate({ email: "a@b.co" }),
+    ).rejects.toBeInstanceOf(SyntaxError)
+    expect(calls).toHaveLength(1)
+  })
+
   it("sends the caller's own Idempotency-Key", async () => {
     const { calls, fetch } = fakeFetch(json(200, {}))
     await new Touchmark({ apiKey: "k", fetch }).ip.lookup(

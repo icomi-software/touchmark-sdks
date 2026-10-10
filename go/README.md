@@ -24,6 +24,7 @@ if err == nil && check.Status != "done" {
 - Every call costs the credits of the API call it makes; see the [API reference](https://api.touchmark.dev/docs).
 - Errors are `*touchmark.Error` with `Status`, `Code`, `Detail`, `RequestID` and `RetryAfter`.
 - Each charged call sends an `Idempotency-Key` (a random one, or yours: `touchmark.WithIdempotencyKey(key)`), so the API charges it at most once.
+- A key belongs to one request: reuse it only to retry that same call, with the same SDK. Another body or endpoint, or more than 10 replays, answers `422 idempotency_key_reused`.
 - Network errors and `429`, `409 idempotency_key_in_use`, `500`, `502`, `503` and `504` answers are retried with the same key and body, at most twice; other errors are not. `Options.MaxRetries` changes the count, and a negative value turns retries off.
 - Redirects are not followed, so your key is never sent to another origin.
 - If you show IP country or network data to anyone, keep the credit "IP Geolocation by DB-IP" (https://db-ip.com) next to it.

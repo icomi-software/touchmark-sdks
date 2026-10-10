@@ -46,7 +46,8 @@ type Options struct {
 	// MaxRetries defaults to DefaultMaxRetries; a negative value turns retries off.
 	MaxRetries int
 	// HTTPClient defaults to a client with a 30-second timeout. The Client
-	// never follows redirects, so the key is never sent to another origin.
+	// never follows redirects, so the key is never sent to another origin: its
+	// CheckRedirect is overridden, and your own function is not used.
 	HTTPClient *http.Client
 }
 
@@ -141,25 +142,33 @@ func WithIdempotencyKey(key string) CallOption {
 // String returns a pointer to s, for optional fields such as Country.
 func String(s string) *string { return &s }
 
+// result returns the answer only when the call succeeded.
+func result[T any](err error, answer *T) (*T, error) {
+	if err != nil {
+		return nil, err
+	}
+	return answer, nil
+}
+
 // EmailService holds the email calls.
 type EmailService struct{ c *Client }
 
 // Validate checks syntax, MX, disposable and free-provider domains and role accounts. 1 credit.
 func (s *EmailService) Validate(ctx context.Context, body ValidateRequest, options ...CallOption) (*ValidateResponse, error) {
 	var answer ValidateResponse
-	return &answer, s.c.post(ctx, "/v1/email/validate", body, &answer, options)
+	return result(s.c.post(ctx, "/v1/email/validate", body, &answer, options), &answer)
 }
 
 // ValidateBatch validates up to 100 addresses, answered in order. 1 credit each.
 func (s *EmailService) ValidateBatch(ctx context.Context, body BatchValidateRequest, options ...CallOption) (*BatchValidateResponse, error) {
 	var answer BatchValidateResponse
-	return &answer, s.c.post(ctx, "/v1/email/validate/batch", body, &answer, options)
+	return result(s.c.post(ctx, "/v1/email/validate/batch", body, &answer, options), &answer)
 }
 
 // Verify starts a mailbox check; a queued answer carries its ID. Up to 5 credits.
 func (s *EmailService) Verify(ctx context.Context, body ValidateRequest, options ...CallOption) (*VerifyResponse, error) {
 	var answer VerifyResponse
-	return &answer, s.c.post(ctx, "/v1/email/verify", body, &answer, options)
+	return result(s.c.post(ctx, "/v1/email/verify", body, &answer, options), &answer)
 }
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -173,7 +182,7 @@ func (s *EmailService) GetVerification(ctx context.Context, verificationID strin
 	}
 	query := url.Values{"wait": {strconv.Itoa(wait)}}
 	var answer VerifyResponse
-	return &answer, s.c.send(ctx, http.MethodGet, "/v1/email/verify/"+verificationID+"?"+query.Encode(), nil, "", &answer)
+	return result(s.c.send(ctx, http.MethodGet, "/v1/email/verify/"+verificationID+"?"+query.Encode(), nil, "", &answer), &answer)
 }
 
 // WaitForVerification polls a mailbox check until it is done or timeout
@@ -202,7 +211,7 @@ type DomainService struct{ c *Client }
 // SenderReadiness checks a domain's DNS against the Gmail, Yahoo and Microsoft sender rules. 2 credits.
 func (s *DomainService) SenderReadiness(ctx context.Context, body SenderReadinessRequest, options ...CallOption) (*SenderReadinessResponse, error) {
 	var answer SenderReadinessResponse
-	return &answer, s.c.post(ctx, "/v1/domain/sender-readiness", body, &answer, options)
+	return result(s.c.post(ctx, "/v1/domain/sender-readiness", body, &answer, options), &answer)
 }
 
 // IPService holds the IP calls.
@@ -211,13 +220,13 @@ type IPService struct{ c *Client }
 // Lookup gives an address's country, network owner, hosting company and Tor exit. 1 credit.
 func (s *IPService) Lookup(ctx context.Context, body LookupRequest, options ...CallOption) (*LookupResponse, error) {
 	var answer LookupResponse
-	return &answer, s.c.post(ctx, "/v1/ip/lookup", body, &answer, options)
+	return result(s.c.post(ctx, "/v1/ip/lookup", body, &answer, options), &answer)
 }
 
 // LookupBatch looks up to 100 addresses, answered in order. 1 credit each.
 func (s *IPService) LookupBatch(ctx context.Context, body BatchLookupRequest, options ...CallOption) (*BatchLookupResponse, error) {
 	var answer BatchLookupResponse
-	return &answer, s.c.post(ctx, "/v1/ip/lookup/batch", body, &answer, options)
+	return result(s.c.post(ctx, "/v1/ip/lookup/batch", body, &answer, options), &answer)
 }
 
 // PhoneService holds the phone calls.
@@ -226,13 +235,13 @@ type PhoneService struct{ c *Client }
 // Validate checks numbering-plan validity, formats, country and line type. 1 credit.
 func (s *PhoneService) Validate(ctx context.Context, body PhoneValidateRequest, options ...CallOption) (*PhoneValidateResponse, error) {
 	var answer PhoneValidateResponse
-	return &answer, s.c.post(ctx, "/v1/phone/validate", body, &answer, options)
+	return result(s.c.post(ctx, "/v1/phone/validate", body, &answer, options), &answer)
 }
 
 // ValidateBatch validates up to 100 numbers, answered in order. 1 credit each.
 func (s *PhoneService) ValidateBatch(ctx context.Context, body PhoneBatchValidateRequest, options ...CallOption) (*PhoneBatchValidateResponse, error) {
 	var answer PhoneBatchValidateResponse
-	return &answer, s.c.post(ctx, "/v1/phone/validate/batch", body, &answer, options)
+	return result(s.c.post(ctx, "/v1/phone/validate/batch", body, &answer, options), &answer)
 }
 
 // AccountService holds the account call.
@@ -241,7 +250,7 @@ type AccountService struct{ c *Client }
 // Get reads the credit balance, the tier and the key. Free.
 func (s *AccountService) Get(ctx context.Context) (*AccountResponse, error) {
 	var answer AccountResponse
-	return &answer, s.c.send(ctx, http.MethodGet, "/v1/account", nil, "", &answer)
+	return result(s.c.send(ctx, http.MethodGet, "/v1/account", nil, "", &answer), &answer)
 }
 
 // post sends a charged call: its body and Idempotency-Key stay the same on
