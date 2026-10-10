@@ -43,7 +43,7 @@ Expected: no diff. A diff means production serves a different document: deploy `
 
 ## Once: after the GitHub account rename (2026-10-10)
 
-The account `marcin-marciszewski` is now `icomi-software`. GitHub redirects the old name, but trusted publishing checks the repository owner by name, so update both publishers before the next release:
+The account `marcin-marciszewski` is now `icomi-software`. GitHub redirects the old name, but trusted publishing checks the repository owner by name, so both publishers were replaced (done 2026-10-10; the first release run confirms them):
 1. npm: https://www.npmjs.com/package/touchmark → Settings → Trusted publishing → delete the `marcin-marciszewski` publisher (it cannot be edited) and add a GitHub Actions publisher: organisation or user `icomi-software`, repository `touchmark-sdks`, workflow `release-npm.yml`, environment `npm`.
 2. PyPI: https://pypi.org/manage/project/touchmark/settings/publishing/ → remove the `marcin-marciszewski` publisher and add one for owner `icomi-software`, repository `touchmark-sdks`, workflow `release-pypi.yml`, environment `pypi`.
 
