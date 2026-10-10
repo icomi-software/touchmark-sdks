@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
 # Regenerate the clients' types and models from openapi/openapi.json.
-# Usage: bash scripts/generate.sh [typescript|python]   (default: both)
+# Usage: bash scripts/generate.sh [typescript|python|go]   (default: all)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 what=${1:-all}
 case $what in
-  all | typescript | python) ;;
-  *) echo "Usage: bash scripts/generate.sh [typescript|python]" >&2; exit 2 ;;
+  all | typescript | python | go) ;;
+  *) echo "Usage: bash scripts/generate.sh [typescript|python|go]" >&2; exit 2 ;;
 esac
-if [ "$what" != python ]; then
+if [ "$what" = all ] || [ "$what" = typescript ]; then
   (cd typescript && npm run generate)
 fi
-if [ "$what" != typescript ]; then
+if [ "$what" = all ] || [ "$what" = go ]; then
+  (cd go && python3 scripts/gen_types.py ../openapi/openapi.json types.gen.go && gofmt -w types.gen.go)
+fi
+if [ "$what" = all ] || [ "$what" = python ]; then
   (
     cd python
     # The generator warns about the application/problem+json error answers; it

@@ -6,6 +6,7 @@ Official client libraries for the [Touchmark API](https://api.touchmark.dev/docs
 | --- | --- | --- |
 | TypeScript / JavaScript | [`touchmark`](https://www.npmjs.com/package/touchmark) on npm | [`typescript/`](typescript/) |
 | Python | [`touchmark`](https://pypi.org/project/touchmark/) on PyPI | [`python/`](python/) |
+| Go | `github.com/marcin-marciszewski/touchmark-sdks/go` | [`go/`](go/) |
 
 ## TypeScript
 
@@ -37,11 +38,30 @@ print(answer.result)
 
 `AsyncTouchmark` offers the same methods with `await`.
 
+## Go
+
+```bash
+go get github.com/marcin-marciszewski/touchmark-sdks/go
+```
+
+```go
+tm, err := touchmark.New(touchmark.Options{}) // reads TOUCHMARK_API_KEY
+if err != nil {
+	log.Fatal(err)
+}
+answer, err := tm.Email.Validate(ctx, touchmark.ValidateRequest{Email: "jane@acme.com"})
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(answer.Result)
+```
+
 ## Behaviour
 
 - Every call costs the credits of the API call it makes; see the API reference.
-- Errors raise `TouchmarkError` with `status`, `code`, `detail`, `request_id` and `retry_after`.
-- Only `429` (after `Retry-After`) and `503 upstream_unavailable` answers are retried, at most twice: the API charges for neither. A request that may already have been charged is never retried.
+- Errors raise `TouchmarkError` with `status`, `code`, `detail`, `request_id` and `retry_after` (`*touchmark.Error` in Go).
+- Each charged call sends an `Idempotency-Key`: a random one, or one you pass. The API charges a call at most once per key and body for 24 hours.
+- Network errors and `429`, `409 idempotency_key_in_use`, `500`, `502`, `503` and `504` answers are retried with the same key and body, at most twice, after `Retry-After` or 1 then 2 seconds (never more than 30). Other errors are not retried.
 - `email.verify` returns at once; `email.wait_for_verification` (`waitForVerification` in TypeScript) waits for a mailbox check to finish.
 
 ## Terms and privacy
@@ -50,8 +70,8 @@ Using the Touchmark API is subject to the [Terms of Service](https://touchmark.d
 
 ## Licence
 
-MIT; see [LICENSE](LICENSE). The licence covers the code only and grants no rights to the Touchmark name or logo. The MIT notices of the two code generators are kept in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) as a courtesy. The Python package depends on `httpx` (BSD-3-Clause), `attrs` (MIT) and `python-dateutil` (Apache-2.0 or BSD-3-Clause), installed from PyPI.
+MIT; see [LICENSE](LICENSE). The licence covers the code only and grants no rights to the Touchmark name or logo. The MIT notices of the two code generators are kept in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) as a courtesy. The Python package depends on `httpx` (BSD-3-Clause), `attrs` (MIT) and `python-dateutil` (Apache-2.0 or BSD-3-Clause), installed from PyPI. The Go module uses the standard library only.
 
 ## Keeping in step with the API
 
-`bash scripts/sync-openapi.sh` downloads the public API document into `openapi/openapi.json`; `bash scripts/generate.sh` regenerates both clients from it. CI fails if the generated code does not match the document.
+`bash scripts/sync-openapi.sh` downloads the public API document into `openapi/openapi.json`; `bash scripts/generate.sh` regenerates the three clients from it. CI fails if the generated code does not match the document.

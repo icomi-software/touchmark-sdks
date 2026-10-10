@@ -60,3 +60,28 @@ jobs:
       - run: uv run pytest -q
       - name: The built wheel installs and imports
         run: bash scripts/build-check.sh
+
+  go:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go: ["1.20", "stable"]
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ matrix.go }}
+          cache: false
+      - name: Generated types match the OpenAPI snapshot
+        run: |
+          cd .. && bash scripts/generate.sh go
+          git diff --exit-code -- go/types.gen.go
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test ./...

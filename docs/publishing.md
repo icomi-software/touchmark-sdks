@@ -43,12 +43,14 @@ Expected: no diff. A diff means production serves a different document: deploy `
 
 ## Every release
 
-1. Bump the version: `typescript/package.json` (and `npm install` to update the lock file) and/or `python/pyproject.toml` with `python/touchmark/__init__.py`'s `__version__` (and `uv lock` in `python/` to update its lock file). Commit and push.
+1. Bump the version: `typescript/package.json` (and `npm install` to update the lock file), `python/pyproject.toml` (and `uv lock` in `python/` to update its lock file; `__version__` reads it), and/or `userAgent` in `go/touchmark.go`. Commit and push.
 2. Push the tag:
    ```bash
    git tag ts-v0.1.1 && git push origin ts-v0.1.1   # TypeScript
    git tag py-v0.1.0 && git push origin py-v0.1.0   # Python (its first release goes this way)
+   git tag go/v0.1.0 && git push origin go/v0.1.0   # Go
    ```
+   A Go module has no registry: its tag is the release. Expected, a few minutes later: `GOPROXY=https://proxy.golang.org go list -m github.com/marcin-marciszewski/touchmark-sdks/go@v0.1.0` prints the version.
    Never push `ts-v0.1.0`: you published 0.1.0 to npm by hand, so its release run would fail at `npm publish` (the version exists). The first TypeScript tag is `ts-v0.1.1`.
 3. Approve the run in the environment if you added yourself as a reviewer. Expected: the workflow ends green, and `npm view touchmark version` or `pip index versions touchmark` shows the new version. npm shows a "Provenance" badge on releases published this way.
 
