@@ -8,6 +8,7 @@ once for the asynchronous client.
 from __future__ import annotations
 
 import functools
+import json
 import math
 import os
 import time
@@ -32,7 +33,8 @@ from ._gen.models import (
 )
 
 DEFAULT_BASE_URL = "https://api.touchmark.dev"
-# Retries of a 429 or a 503: the API charges for neither.
+# Retries of network errors and of 429, 409 in-use and 5xx answers. Charged calls
+# carry an Idempotency-Key, so a retry is charged at most once.
 DEFAULT_MAX_RETRIES = 2
 # The API's longest long poll for a mailbox check.
 MAX_WAIT_SECONDS = 10
@@ -123,9 +125,27 @@ def _error(response: httpx.Response) -> TouchmarkError:
 
 
 def _retryable(error: TouchmarkError) -> bool:
-    return error.status == 429 or (
-        error.status == 503 and error.code == "upstream_unavailable"
+    return error.status in (429, 500, 502, 503, 504) or (
+        error.status == 409 and error.code == "idempotency_key_in_use"
     )
+
+
+def _request(
+    headers: Mapping[str, str], call: _Call[Any], idempotency_key: str | None
+) -> tuple[bytes | None, dict[str, str]]:
+    """The body and headers, the same on every retry.
+
+    Every POST is charged, so it carries an Idempotency-Key: the API charges
+    it at most once per key and body.
+    """
+    if call.body is None:
+        return None, dict(headers)
+    content = json.dumps(call.body, separators=(",", ":")).encode()
+    return content, {
+        **headers,
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotency_key or str(uuid.uuid4()),
+    }
 
 
 def _delay(error: TouchmarkError, attempt: int) -> float:
@@ -255,17 +275,24 @@ class Touchmark:
     def __exit__(self, *_: object) -> None:
         self.close()
 
-    def _send(self, call: _Call[R]) -> R:
+    def _send(self, call: _Call[R], idempotency_key: str | None = None) -> R:
+        content, headers = _request(self._headers, call, idempotency_key)
         attempt = 0
         while True:
-            # A network error is not retried: a POST may already have been charged.
-            response = self._http.request(
-                call.method,
-                self._base_url + call.path,
-                json=call.body,
-                params=dict(call.params),
-                headers=self._headers,
-            )
+            try:
+                response = self._http.request(
+                    call.method,
+                    self._base_url + call.path,
+                    content=content,
+                    params=dict(call.params),
+                    headers=headers,
+                )
+            except httpx.TransportError:
+                if attempt >= self._max_retries:
+                    raise
+                time.sleep(attempt + 1)
+                attempt += 1
+                continue
             if response.is_success:
                 return call.parse(response.json())
             error = _error(response)
@@ -312,17 +339,24 @@ class AsyncTouchmark:
     async def __aexit__(self, *_: object) -> None:
         await self.aclose()
 
-    async def _send(self, call: _Call[R]) -> R:
+    async def _send(self, call: _Call[R], idempotency_key: str | None = None) -> R:
+        content, headers = _request(self._headers, call, idempotency_key)
         attempt = 0
         while True:
-            # A network error is not retried: a POST may already have been charged.
-            response = await self._http.request(
-                call.method,
-                self._base_url + call.path,
-                json=call.body,
-                params=dict(call.params),
-                headers=self._headers,
-            )
+            try:
+                response = await self._http.request(
+                    call.method,
+                    self._base_url + call.path,
+                    content=content,
+                    params=dict(call.params),
+                    headers=headers,
+                )
+            except httpx.TransportError:
+                if attempt >= self._max_retries:
+                    raise
+                await anyio.sleep(attempt + 1)
+                attempt += 1
+                continue
             if response.is_success:
                 return call.parse(response.json())
             error = _error(response)
@@ -336,17 +370,23 @@ class _Email:
     def __init__(self, client: Touchmark) -> None:
         self._client = client
 
-    def validate(self, email: str) -> ValidateResponse:
+    def validate(
+        self, email: str, *, idempotency_key: str | None = None
+    ) -> ValidateResponse:
         """Syntax, MX, disposable and free-provider domains, role accounts. 1 credit."""
-        return self._client._send(_validate_email(email))
+        return self._client._send(_validate_email(email), idempotency_key)
 
-    def validate_batch(self, emails: list[str]) -> BatchValidateResponse:
+    def validate_batch(
+        self, emails: list[str], *, idempotency_key: str | None = None
+    ) -> BatchValidateResponse:
         """Up to 100 addresses, answered in order. 1 credit each."""
-        return self._client._send(_validate_email_batch(emails))
+        return self._client._send(_validate_email_batch(emails), idempotency_key)
 
-    def verify(self, email: str) -> VerifyResponse:
+    def verify(
+        self, email: str, *, idempotency_key: str | None = None
+    ) -> VerifyResponse:
         """Starts a mailbox check; a queued answer carries its id. Up to 5 credits."""
-        return self._client._send(_verify_email(email))
+        return self._client._send(_verify_email(email), idempotency_key)
 
     def get_verification(
         self, verification_id: str, *, wait: int | None = None
@@ -369,17 +409,23 @@ class _AsyncEmail:
     def __init__(self, client: AsyncTouchmark) -> None:
         self._client = client
 
-    async def validate(self, email: str) -> ValidateResponse:
+    async def validate(
+        self, email: str, *, idempotency_key: str | None = None
+    ) -> ValidateResponse:
         """Syntax, MX, disposable and free-provider domains, role accounts. 1 credit."""
-        return await self._client._send(_validate_email(email))
+        return await self._client._send(_validate_email(email), idempotency_key)
 
-    async def validate_batch(self, emails: list[str]) -> BatchValidateResponse:
+    async def validate_batch(
+        self, emails: list[str], *, idempotency_key: str | None = None
+    ) -> BatchValidateResponse:
         """Up to 100 addresses, answered in order. 1 credit each."""
-        return await self._client._send(_validate_email_batch(emails))
+        return await self._client._send(_validate_email_batch(emails), idempotency_key)
 
-    async def verify(self, email: str) -> VerifyResponse:
+    async def verify(
+        self, email: str, *, idempotency_key: str | None = None
+    ) -> VerifyResponse:
         """Starts a mailbox check; a queued answer carries its id. Up to 5 credits."""
-        return await self._client._send(_verify_email(email))
+        return await self._client._send(_verify_email(email), idempotency_key)
 
     async def get_verification(
         self, verification_id: str, *, wait: int | None = None
@@ -405,10 +451,16 @@ class _Domain:
         self._client = client
 
     def sender_readiness(
-        self, domain: str, *, dkim_selectors: list[str] | None = None
+        self,
+        domain: str,
+        *,
+        dkim_selectors: list[str] | None = None,
+        idempotency_key: str | None = None,
     ) -> SenderReadinessResponse:
         """The domain's DNS against the bulk-sender rules. 2 credits."""
-        return self._client._send(_sender_readiness(domain, dkim_selectors))
+        return self._client._send(
+            _sender_readiness(domain, dkim_selectors), idempotency_key
+        )
 
 
 class _AsyncDomain:
@@ -416,36 +468,48 @@ class _AsyncDomain:
         self._client = client
 
     async def sender_readiness(
-        self, domain: str, *, dkim_selectors: list[str] | None = None
+        self,
+        domain: str,
+        *,
+        dkim_selectors: list[str] | None = None,
+        idempotency_key: str | None = None,
     ) -> SenderReadinessResponse:
         """The domain's DNS against the bulk-sender rules. 2 credits."""
-        return await self._client._send(_sender_readiness(domain, dkim_selectors))
+        return await self._client._send(
+            _sender_readiness(domain, dkim_selectors), idempotency_key
+        )
 
 
 class _Ip:
     def __init__(self, client: Touchmark) -> None:
         self._client = client
 
-    def lookup(self, ip: str) -> LookupResponse:
+    def lookup(self, ip: str, *, idempotency_key: str | None = None) -> LookupResponse:
         """Country, network owner, hosting company and Tor exit. 1 credit."""
-        return self._client._send(_lookup_ip(ip))
+        return self._client._send(_lookup_ip(ip), idempotency_key)
 
-    def lookup_batch(self, ips: list[str]) -> BatchLookupResponse:
+    def lookup_batch(
+        self, ips: list[str], *, idempotency_key: str | None = None
+    ) -> BatchLookupResponse:
         """Up to 100 addresses, answered in order. 1 credit each."""
-        return self._client._send(_lookup_ip_batch(ips))
+        return self._client._send(_lookup_ip_batch(ips), idempotency_key)
 
 
 class _AsyncIp:
     def __init__(self, client: AsyncTouchmark) -> None:
         self._client = client
 
-    async def lookup(self, ip: str) -> LookupResponse:
+    async def lookup(
+        self, ip: str, *, idempotency_key: str | None = None
+    ) -> LookupResponse:
         """Country, network owner, hosting company and Tor exit. 1 credit."""
-        return await self._client._send(_lookup_ip(ip))
+        return await self._client._send(_lookup_ip(ip), idempotency_key)
 
-    async def lookup_batch(self, ips: list[str]) -> BatchLookupResponse:
+    async def lookup_batch(
+        self, ips: list[str], *, idempotency_key: str | None = None
+    ) -> BatchLookupResponse:
         """Up to 100 addresses, answered in order. 1 credit each."""
-        return await self._client._send(_lookup_ip_batch(ips))
+        return await self._client._send(_lookup_ip_batch(ips), idempotency_key)
 
 
 class _Phone:
@@ -453,16 +517,26 @@ class _Phone:
         self._client = client
 
     def validate(
-        self, phone: str, *, country: str | None = None
+        self,
+        phone: str,
+        *,
+        country: str | None = None,
+        idempotency_key: str | None = None,
     ) -> PhoneValidateResponse:
         """Numbering-plan validity, formats, country and line type. 1 credit."""
-        return self._client._send(_validate_phone(phone, country))
+        return self._client._send(_validate_phone(phone, country), idempotency_key)
 
     def validate_batch(
-        self, phones: list[str], *, country: str | None = None
+        self,
+        phones: list[str],
+        *,
+        country: str | None = None,
+        idempotency_key: str | None = None,
     ) -> PhoneBatchValidateResponse:
         """Up to 100 numbers, answered in order. 1 credit each."""
-        return self._client._send(_validate_phone_batch(phones, country))
+        return self._client._send(
+            _validate_phone_batch(phones, country), idempotency_key
+        )
 
 
 class _AsyncPhone:
@@ -470,16 +544,28 @@ class _AsyncPhone:
         self._client = client
 
     async def validate(
-        self, phone: str, *, country: str | None = None
+        self,
+        phone: str,
+        *,
+        country: str | None = None,
+        idempotency_key: str | None = None,
     ) -> PhoneValidateResponse:
         """Numbering-plan validity, formats, country and line type. 1 credit."""
-        return await self._client._send(_validate_phone(phone, country))
+        return await self._client._send(
+            _validate_phone(phone, country), idempotency_key
+        )
 
     async def validate_batch(
-        self, phones: list[str], *, country: str | None = None
+        self,
+        phones: list[str],
+        *,
+        country: str | None = None,
+        idempotency_key: str | None = None,
     ) -> PhoneBatchValidateResponse:
         """Up to 100 numbers, answered in order. 1 credit each."""
-        return await self._client._send(_validate_phone_batch(phones, country))
+        return await self._client._send(
+            _validate_phone_batch(phones, country), idempotency_key
+        )
 
 
 class _Account:

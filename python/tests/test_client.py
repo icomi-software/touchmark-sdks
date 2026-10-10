@@ -206,7 +206,7 @@ def test_an_answer_that_is_not_a_problem_is_named_by_its_status() -> None:
     with respx.mock(base_url=API) as api:
         api.get("/v1/account").respond(502, text="<html>bad gateway</html>")
         with pytest.raises(TouchmarkError) as raised:
-            Touchmark("k").account.get()
+            Touchmark("k", max_retries=0).account.get()
     assert (raised.value.code, raised.value.detail) == ("http_502", None)
 
 
@@ -302,7 +302,12 @@ def test_a_long_retry_after_is_capped(sleeps: list[float]) -> None:
 
 @pytest.mark.parametrize(
     ("status", "code"),
-    [(500, "internal_error"), (402, "insufficient_credits"), (503, "maintenance")],
+    [
+        (402, "insufficient_credits"),
+        (400, "invalid_idempotency_key"),
+        (422, "idempotency_key_reused"),
+        (409, "conflict"),
+    ],
 )
 def test_other_errors_are_not_retried(
     status: int, code: str, sleeps: list[float]
@@ -315,14 +320,86 @@ def test_other_errors_are_not_retried(
     assert sleeps == []
 
 
-def test_a_network_error_is_not_retried() -> None:
+@pytest.mark.parametrize(
+    "failure",
+    [
+        problem(500, "internal_error"),
+        httpx.Response(502, text="bad gateway"),
+        problem(503, "maintenance"),
+        httpx.Response(504, text="timeout"),
+        problem(409, "idempotency_key_in_use", **{"retry-after": "1"}),
+        httpx.ConnectError("down"),
+        httpx.ReadTimeout("slow"),
+    ],
+)
+def test_a_failed_call_is_retried_with_the_same_key_and_body(
+    failure: httpx.Response | Exception, sleeps: list[float]
+) -> None:
+    with respx.mock(base_url=API) as api:
+        route = api.post("/v1/email/validate").mock(
+            side_effect=[failure, httpx.Response(200, json=fixture("validate_email"))]
+        )
+        Touchmark("k").email.validate("user@example.com")
+    first, second = (call.request for call in route.calls)
+    assert second.content == first.content
+    assert second.headers["idempotency-key"] == first.headers["idempotency-key"]
+    assert sleeps == [1.0]
+
+
+def test_a_network_error_is_raised_after_the_last_retry(sleeps: list[float]) -> None:
     with respx.mock(base_url=API) as api:
         route = api.post("/v1/email/validate").mock(
             side_effect=httpx.ConnectError("down")
         )
         with pytest.raises(httpx.ConnectError):
             Touchmark("k").email.validate("user@example.com")
-    assert route.call_count == 1
+    assert route.call_count == 3
+    assert sleeps == [1.0, 2.0]
+
+
+def test_each_charged_call_gets_a_new_idempotency_key() -> None:
+    with respx.mock(base_url=API) as api:
+        route = api.post("/v1/email/validate").respond(json=fixture("validate_email"))
+        tm = Touchmark("k")
+        tm.email.validate("user@example.com")
+        tm.email.validate("user@example.com")
+    first, second = (call.request.headers["idempotency-key"] for call in route.calls)
+    assert uuid.UUID(first).version == 4
+    assert first != second
+
+
+def test_a_callers_idempotency_key_is_sent() -> None:
+    with respx.mock(base_url=API) as api:
+        route = api.post("/v1/ip/lookup").respond(json=fixture("lookup_ip"))
+        Touchmark("k").ip.lookup("192.0.2.1", idempotency_key="order-42")
+    assert route.calls.last.request.headers["idempotency-key"] == "order-42"
+
+
+def test_a_free_get_sends_no_idempotency_key() -> None:
+    with respx.mock(base_url=API) as api:
+        route = api.get("/v1/account").respond(json=fixture("account"))
+        Touchmark("k").account.get()
+    assert "idempotency-key" not in route.calls.last.request.headers
+
+
+@pytest.mark.anyio
+async def test_the_async_client_retries_a_network_error_with_the_same_key(
+    sleeps: list[float],
+) -> None:
+    with respx.mock(base_url=API) as api:
+        route = api.post("/v1/phone/validate").mock(
+            side_effect=[
+                httpx.ConnectError("down"),
+                httpx.Response(200, json=fixture("validate_phone")),
+            ]
+        )
+        async with AsyncTouchmark("k") as tm:
+            await tm.phone.validate("+44 20 7946 0000", idempotency_key="p-1")
+    assert [call.request.headers["idempotency-key"] for call in route.calls] == [
+        "p-1",
+        "p-1",
+    ]
+    assert sleeps == [1.0]
 
 
 def test_max_retries_zero_turns_retries_off(sleeps: list[float]) -> None:
