@@ -3,11 +3,11 @@
 Official Go client for the [Touchmark API](https://api.touchmark.dev/docs): email validation and mailbox checks, sender readiness, IP lookup and phone number validation. Go 1.20+, standard library only.
 
 ```bash
-go get github.com/marcin-marciszewski/touchmark-sdks/go
+go get github.com/icomi-software/touchmark-sdks/go
 ```
 
 ```go
-import touchmark "github.com/marcin-marciszewski/touchmark-sdks/go"
+import touchmark "github.com/icomi-software/touchmark-sdks/go"
 
 tm, err := touchmark.New(touchmark.Options{}) // reads TOUCHMARK_API_KEY
 

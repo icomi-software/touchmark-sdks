@@ -17,7 +17,7 @@ Expected: no diff. A diff means production serves a different document: deploy `
 1. Create the empty public repository and push this folder (from this folder):
    ```bash
    git status --short   # prints nothing: the folder's history is already committed
-   gh repo create marcin-marciszewski/touchmark-sdks --public --source=. --remote=origin
+   gh repo create icomi-software/touchmark-sdks --public --source=. --remote=origin
    git push -u origin main
    ```
    Expected: the CI workflow runs on `main` and ends green.
@@ -34,12 +34,18 @@ Expected: no diff. A diff means production serves a different document: deploy `
    npm publish --access public
    ```
    Expected: `npm view touchmark version` prints `0.1.0`.
-3. On https://www.npmjs.com/package/touchmark → Settings → Trusted publishing, add GitHub Actions with: organisation or user `marcin-marciszewski`, repository `touchmark-sdks`, workflow `release-npm.yml`, environment `npm`. Then, under "Publishing access", choose to require two-factor authentication and disallow tokens.
+3. On https://www.npmjs.com/package/touchmark → Settings → Trusted publishing, add GitHub Actions with: organisation or user `icomi-software`, repository `touchmark-sdks`, workflow `release-npm.yml`, environment `npm`. Then, under "Publishing access", choose to require two-factor authentication and disallow tokens.
 
 ## Once: PyPI
 
 1. Sign in at https://pypi.org (create an account if needed) and turn on two-factor authentication.
-2. Account settings → Publishing → "Add a new pending publisher": PyPI project name `touchmark`, owner `marcin-marciszewski`, repository `touchmark-sdks`, workflow `release-pypi.yml`, environment `pypi`.
+2. Account settings → Publishing → "Add a new pending publisher": PyPI project name `touchmark`, owner `icomi-software`, repository `touchmark-sdks`, workflow `release-pypi.yml`, environment `pypi`.
+
+## Once: after the GitHub account rename (2026-10-10)
+
+The account `marcin-marciszewski` is now `icomi-software`. GitHub redirects the old name, but trusted publishing checks the repository owner by name, so update both publishers before the next release:
+1. npm: https://www.npmjs.com/package/touchmark → Settings → Trusted publishing → edit the GitHub Actions publisher: organisation or user `icomi-software`.
+2. PyPI: https://pypi.org/manage/project/touchmark/settings/publishing/ → remove the `marcin-marciszewski` publisher and add one for owner `icomi-software`, repository `touchmark-sdks`, workflow `release-pypi.yml`, environment `pypi`.
 
 ## Every release
 
@@ -55,7 +61,7 @@ Expected: no diff. A diff means production serves a different document: deploy `
    git tag py-v0.2.0 && git push origin py-v0.2.0   # Python
    git tag go/v0.1.0 && git push origin go/v0.1.0   # Go
    ```
-   A Go module has no registry: its tag is the release. Expected, a few minutes later: `GOPROXY=https://proxy.golang.org go list -m github.com/marcin-marciszewski/touchmark-sdks/go@v0.1.0` prints the version.
+   A Go module has no registry: its tag is the release. Expected, a few minutes later: `GOPROXY=https://proxy.golang.org go list -m github.com/icomi-software/touchmark-sdks/go@v0.1.0` prints the version.
 4. Approve the run in the environment if you added yourself as a reviewer. Expected: the workflow ends green, and `npm view touchmark version` or `pip index versions touchmark` shows the new version. npm shows a "Provenance" badge on releases published this way.
 
 ## After an API change

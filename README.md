@@ -6,7 +6,7 @@ Official client libraries for the [Touchmark API](https://api.touchmark.dev/docs
 | --- | --- | --- |
 | TypeScript / JavaScript | [`touchmark`](https://www.npmjs.com/package/touchmark) on npm | [`typescript/`](typescript/) |
 | Python | [`touchmark`](https://pypi.org/project/touchmark/) on PyPI | [`python/`](python/) |
-| Go | `github.com/marcin-marciszewski/touchmark-sdks/go` | [`go/`](go/) |
+| Go | `github.com/icomi-software/touchmark-sdks/go` | [`go/`](go/) |
 
 ## TypeScript
 
@@ -41,7 +41,7 @@ print(answer.result)
 ## Go
 
 ```bash
-go get github.com/marcin-marciszewski/touchmark-sdks/go
+go get github.com/icomi-software/touchmark-sdks/go
 ```
 
 ```go

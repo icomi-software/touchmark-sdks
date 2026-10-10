@@ -1,3 +1,3 @@
-module github.com/marcin-marciszewski/touchmark-sdks/go
+module github.com/icomi-software/touchmark-sdks/go
 
 go 1.20

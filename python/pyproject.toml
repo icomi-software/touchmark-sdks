@@ -23,7 +23,7 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://api.touchmark.dev/docs"
-Repository = "https://github.com/marcin-marciszewski/touchmark-sdks"
+Repository = "https://github.com/icomi-software/touchmark-sdks"
 
 [dependency-groups]
 dev = [

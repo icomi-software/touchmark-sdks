@@ -7,7 +7,7 @@
   "homepage": "https://api.touchmark.dev/docs",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/marcin-marciszewski/touchmark-sdks.git",
+    "url": "git+https://github.com/icomi-software/touchmark-sdks.git",
     "directory": "typescript"
   },
   "keywords": [
