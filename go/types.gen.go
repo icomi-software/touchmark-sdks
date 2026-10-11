@@ -39,6 +39,45 @@ type BatchValidateResponse struct {
 	RequestID      string            `json:"request_id"`
 }
 
+type BulkApiStart struct {
+	Smtp        bool    `json:"smtp,omitempty"`
+	SmtpLimit   *int    `json:"smtp_limit,omitempty"`
+	EmailColumn *int    `json:"email_column,omitempty"`
+	WebhookURL  *string `json:"webhook_url,omitempty"`
+}
+
+type BulkJobPublic struct {
+	ID   string `json:"id"`
+	Kind string `json:"kind"`
+	// A phone job's default country for numbers written without +.
+	Country             *string       `json:"country"`
+	Status              string        `json:"status"`
+	Filename            string        `json:"filename"`
+	Columns             []string      `json:"columns"`
+	EmailColumn         *int          `json:"email_column"`
+	RowCount            int           `json:"row_count"`
+	UniqueCount         *int          `json:"unique_count"`
+	CreditsRequired     *int          `json:"credits_required"`
+	SmtpCreditsRequired *int          `json:"smtp_credits_required"`
+	Smtp                bool          `json:"smtp"`
+	ProcessedRows       int           `json:"processed_rows"`
+	CreditsReserved     int           `json:"credits_reserved"`
+	CreditsUsed         int           `json:"credits_used"`
+	CancelRequested     bool          `json:"cancel_requested"`
+	Error               *string       `json:"error"`
+	CreatedAt           string        `json:"created_at"`
+	StartedAt           *string       `json:"started_at"`
+	FinishedAt          *string       `json:"finished_at"`
+	ExpiresAt           string        `json:"expires_at"`
+	WebhookURL          *string       `json:"webhook_url"`
+	Webhook             *WebhookState `json:"webhook"`
+}
+
+type BulkJobsPublic struct {
+	Data  []BulkJobPublic `json:"data"`
+	Count int             `json:"count"`
+}
+
 type CheckStatus string
 
 const (
@@ -320,4 +359,10 @@ type VerifyResponse struct {
 	Datasets       map[string]string `json:"datasets"`
 	CreditsCharged int               `json:"credits_charged"`
 	RequestID      string            `json:"request_id"`
+}
+
+type WebhookState struct {
+	DeliveredAt *string `json:"delivered_at"`
+	Attempts    int     `json:"attempts"`
+	LastError   *string `json:"last_error"`
 }

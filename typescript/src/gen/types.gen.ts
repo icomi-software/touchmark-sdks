@@ -108,6 +108,139 @@ export type BatchValidateResponse = {
 };
 
 /**
+ * BulkApiStart
+ */
+export type BulkApiStart = {
+    /**
+     * Smtp
+     */
+    smtp?: boolean;
+    /**
+     * Smtp Limit
+     */
+    smtp_limit?: number | null;
+    /**
+     * Email Column
+     */
+    email_column?: number | null;
+    /**
+     * Webhook Url
+     */
+    webhook_url?: string | null;
+};
+
+/**
+ * BulkJobPublic
+ */
+export type BulkJobPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Kind
+     */
+    kind: 'email' | 'ip' | 'phone';
+    /**
+     * Country
+     *
+     * A phone job's default country for numbers written without +.
+     */
+    country: string | null;
+    /**
+     * Status
+     */
+    status: 'uploaded' | 'ready' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'expired';
+    /**
+     * Filename
+     */
+    filename: string;
+    /**
+     * Columns
+     */
+    columns: Array<string>;
+    /**
+     * Email Column
+     */
+    email_column: number | null;
+    /**
+     * Row Count
+     */
+    row_count: number;
+    /**
+     * Unique Count
+     */
+    unique_count: number | null;
+    /**
+     * Credits Required
+     */
+    credits_required: number | null;
+    /**
+     * Smtp Credits Required
+     */
+    smtp_credits_required: number | null;
+    /**
+     * Smtp
+     */
+    smtp: boolean;
+    /**
+     * Processed Rows
+     */
+    processed_rows: number;
+    /**
+     * Credits Reserved
+     */
+    credits_reserved: number;
+    /**
+     * Credits Used
+     */
+    credits_used: number;
+    /**
+     * Cancel Requested
+     */
+    cancel_requested: boolean;
+    /**
+     * Error
+     */
+    error: string | null;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Started At
+     */
+    started_at: string | null;
+    /**
+     * Finished At
+     */
+    finished_at: string | null;
+    /**
+     * Expires At
+     */
+    expires_at: string;
+    /**
+     * Webhook Url
+     */
+    webhook_url: string | null;
+    webhook: WebhookState | null;
+};
+
+/**
+ * BulkJobsPublic
+ */
+export type BulkJobsPublic = {
+    /**
+     * Data
+     */
+    data: Array<BulkJobPublic>;
+    /**
+     * Count
+     */
+    count: number;
+};
+
+/**
  * CheckStatus
  */
 export type CheckStatus = 'pass' | 'warn' | 'fail' | 'unknown';
@@ -844,6 +977,24 @@ export type VerifyResponse = {
 };
 
 /**
+ * WebhookState
+ */
+export type WebhookState = {
+    /**
+     * Delivered At
+     */
+    delivered_at: string | null;
+    /**
+     * Attempts
+     */
+    attempts: number;
+    /**
+     * Last Error
+     */
+    last_error: string | null;
+};
+
+/**
  * Problem
  *
  * An RFC 9457 problem document: the body of every error response.
@@ -940,12 +1091,24 @@ export type ReadAccountResponse = ReadAccountResponses[keyof ReadAccountResponse
 
 export type ValidateEmailData = {
     body: ValidateRequest;
+    headers?: {
+        /**
+         * Idempotency-Key
+         *
+         * Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again.
+         */
+        'Idempotency-Key'?: string | null;
+    };
     path?: never;
     query?: never;
     url: '/v1/email/validate';
 };
 
 export type ValidateEmailErrors = {
+    /**
+     * `invalid_idempotency_key`: Invalid Idempotency-Key; `test_input_required`: Test keys answer test inputs only
+     */
+    400: Problem;
     /**
      * `invalid_api_key`: Invalid API key; `key_revoked`: API key revoked
      */
@@ -959,11 +1122,15 @@ export type ValidateEmailErrors = {
      */
     403: Problem;
     /**
+     * `idempotency_key_in_use`: Idempotency-Key in use
+     */
+    409: Problem;
+    /**
      * `payload_too_large`: Request body too large
      */
     413: Problem;
     /**
-     * `validation_error`: Request validation failed
+     * `validation_error`: Request validation failed; `idempotency_key_reused`: Idempotency-Key reused
      */
     422: Problem;
     /**
@@ -989,12 +1156,24 @@ export type ValidateEmailResponse = ValidateEmailResponses[keyof ValidateEmailRe
 
 export type ValidateEmailBatchData = {
     body: BatchValidateRequest;
+    headers?: {
+        /**
+         * Idempotency-Key
+         *
+         * Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again.
+         */
+        'Idempotency-Key'?: string | null;
+    };
     path?: never;
     query?: never;
     url: '/v1/email/validate/batch';
 };
 
 export type ValidateEmailBatchErrors = {
+    /**
+     * `invalid_idempotency_key`: Invalid Idempotency-Key; `test_input_required`: Test keys answer test inputs only
+     */
+    400: Problem;
     /**
      * `invalid_api_key`: Invalid API key; `key_revoked`: API key revoked
      */
@@ -1008,11 +1187,15 @@ export type ValidateEmailBatchErrors = {
      */
     403: Problem;
     /**
+     * `idempotency_key_in_use`: Idempotency-Key in use
+     */
+    409: Problem;
+    /**
      * `payload_too_large`: Request body too large
      */
     413: Problem;
     /**
-     * `validation_error`: Request validation failed
+     * `validation_error`: Request validation failed; `idempotency_key_reused`: Idempotency-Key reused
      */
     422: Problem;
     /**
@@ -1038,12 +1221,24 @@ export type ValidateEmailBatchResponse = ValidateEmailBatchResponses[keyof Valid
 
 export type VerifyEmailData = {
     body: ValidateRequest;
+    headers?: {
+        /**
+         * Idempotency-Key
+         *
+         * Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again.
+         */
+        'Idempotency-Key'?: string | null;
+    };
     path?: never;
     query?: never;
     url: '/v1/email/verify';
 };
 
 export type VerifyEmailErrors = {
+    /**
+     * `invalid_idempotency_key`: Invalid Idempotency-Key; `test_input_required`: Test keys answer test inputs only
+     */
+    400: Problem;
     /**
      * `invalid_api_key`: Invalid API key; `key_revoked`: API key revoked
      */
@@ -1057,11 +1252,15 @@ export type VerifyEmailErrors = {
      */
     403: Problem;
     /**
+     * `idempotency_key_in_use`: Idempotency-Key in use
+     */
+    409: Problem;
+    /**
      * `payload_too_large`: Request body too large
      */
     413: Problem;
     /**
-     * `validation_error`: Request validation failed
+     * `validation_error`: Request validation failed; `idempotency_key_reused`: Idempotency-Key reused
      */
     422: Problem;
     /**
@@ -1148,12 +1347,24 @@ export type GetVerificationResponse = GetVerificationResponses[keyof GetVerifica
 
 export type SenderReadinessData = {
     body: SenderReadinessRequest;
+    headers?: {
+        /**
+         * Idempotency-Key
+         *
+         * Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again.
+         */
+        'Idempotency-Key'?: string | null;
+    };
     path?: never;
     query?: never;
     url: '/v1/domain/sender-readiness';
 };
 
 export type SenderReadinessErrors = {
+    /**
+     * `invalid_idempotency_key`: Invalid Idempotency-Key; `test_input_required`: Test keys answer test inputs only
+     */
+    400: Problem;
     /**
      * `invalid_api_key`: Invalid API key; `key_revoked`: API key revoked
      */
@@ -1167,11 +1378,15 @@ export type SenderReadinessErrors = {
      */
     403: Problem;
     /**
+     * `idempotency_key_in_use`: Idempotency-Key in use
+     */
+    409: Problem;
+    /**
      * `payload_too_large`: Request body too large
      */
     413: Problem;
     /**
-     * `validation_error`: Request validation failed
+     * `validation_error`: Request validation failed; `idempotency_key_reused`: Idempotency-Key reused
      */
     422: Problem;
     /**
@@ -1197,12 +1412,24 @@ export type SenderReadinessResponse2 = SenderReadinessResponses[keyof SenderRead
 
 export type LookupIpData = {
     body: LookupRequest;
+    headers?: {
+        /**
+         * Idempotency-Key
+         *
+         * Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again.
+         */
+        'Idempotency-Key'?: string | null;
+    };
     path?: never;
     query?: never;
     url: '/v1/ip/lookup';
 };
 
 export type LookupIpErrors = {
+    /**
+     * `invalid_idempotency_key`: Invalid Idempotency-Key; `test_input_required`: Test keys answer test inputs only
+     */
+    400: Problem;
     /**
      * `invalid_api_key`: Invalid API key; `key_revoked`: API key revoked
      */
@@ -1216,11 +1443,15 @@ export type LookupIpErrors = {
      */
     403: Problem;
     /**
+     * `idempotency_key_in_use`: Idempotency-Key in use
+     */
+    409: Problem;
+    /**
      * `payload_too_large`: Request body too large
      */
     413: Problem;
     /**
-     * `validation_error`: Request validation failed
+     * `validation_error`: Request validation failed; `idempotency_key_reused`: Idempotency-Key reused
      */
     422: Problem;
     /**
@@ -1246,12 +1477,24 @@ export type LookupIpResponse = LookupIpResponses[keyof LookupIpResponses];
 
 export type LookupIpBatchData = {
     body: BatchLookupRequest;
+    headers?: {
+        /**
+         * Idempotency-Key
+         *
+         * Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again.
+         */
+        'Idempotency-Key'?: string | null;
+    };
     path?: never;
     query?: never;
     url: '/v1/ip/lookup/batch';
 };
 
 export type LookupIpBatchErrors = {
+    /**
+     * `invalid_idempotency_key`: Invalid Idempotency-Key; `test_input_required`: Test keys answer test inputs only
+     */
+    400: Problem;
     /**
      * `invalid_api_key`: Invalid API key; `key_revoked`: API key revoked
      */
@@ -1265,11 +1508,15 @@ export type LookupIpBatchErrors = {
      */
     403: Problem;
     /**
+     * `idempotency_key_in_use`: Idempotency-Key in use
+     */
+    409: Problem;
+    /**
      * `payload_too_large`: Request body too large
      */
     413: Problem;
     /**
-     * `validation_error`: Request validation failed
+     * `validation_error`: Request validation failed; `idempotency_key_reused`: Idempotency-Key reused
      */
     422: Problem;
     /**
@@ -1295,12 +1542,24 @@ export type LookupIpBatchResponse = LookupIpBatchResponses[keyof LookupIpBatchRe
 
 export type ValidatePhoneData = {
     body: PhoneValidateRequest;
+    headers?: {
+        /**
+         * Idempotency-Key
+         *
+         * Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again.
+         */
+        'Idempotency-Key'?: string | null;
+    };
     path?: never;
     query?: never;
     url: '/v1/phone/validate';
 };
 
 export type ValidatePhoneErrors = {
+    /**
+     * `invalid_idempotency_key`: Invalid Idempotency-Key; `test_input_required`: Test keys answer test inputs only
+     */
+    400: Problem;
     /**
      * `invalid_api_key`: Invalid API key; `key_revoked`: API key revoked
      */
@@ -1314,11 +1573,15 @@ export type ValidatePhoneErrors = {
      */
     403: Problem;
     /**
+     * `idempotency_key_in_use`: Idempotency-Key in use
+     */
+    409: Problem;
+    /**
      * `payload_too_large`: Request body too large
      */
     413: Problem;
     /**
-     * `validation_error`: Request validation failed
+     * `validation_error`: Request validation failed; `idempotency_key_reused`: Idempotency-Key reused
      */
     422: Problem;
     /**
@@ -1344,12 +1607,24 @@ export type ValidatePhoneResponse = ValidatePhoneResponses[keyof ValidatePhoneRe
 
 export type ValidatePhoneBatchData = {
     body: PhoneBatchValidateRequest;
+    headers?: {
+        /**
+         * Idempotency-Key
+         *
+         * Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again.
+         */
+        'Idempotency-Key'?: string | null;
+    };
     path?: never;
     query?: never;
     url: '/v1/phone/validate/batch';
 };
 
 export type ValidatePhoneBatchErrors = {
+    /**
+     * `invalid_idempotency_key`: Invalid Idempotency-Key; `test_input_required`: Test keys answer test inputs only
+     */
+    400: Problem;
     /**
      * `invalid_api_key`: Invalid API key; `key_revoked`: API key revoked
      */
@@ -1363,11 +1638,15 @@ export type ValidatePhoneBatchErrors = {
      */
     403: Problem;
     /**
+     * `idempotency_key_in_use`: Idempotency-Key in use
+     */
+    409: Problem;
+    /**
      * `payload_too_large`: Request body too large
      */
     413: Problem;
     /**
-     * `validation_error`: Request validation failed
+     * `validation_error`: Request validation failed; `idempotency_key_reused`: Idempotency-Key reused
      */
     422: Problem;
     /**
@@ -1390,3 +1669,320 @@ export type ValidatePhoneBatchResponses = {
 };
 
 export type ValidatePhoneBatchResponse = ValidatePhoneBatchResponses[keyof ValidatePhoneBatchResponses];
+
+export type ListBulkJobsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/v1/bulk';
+};
+
+export type ListBulkJobsErrors = {
+    /**
+     * `test_input_required`: Test keys answer test inputs only
+     */
+    400: Problem;
+    /**
+     * `invalid_api_key`: Invalid API key; `key_revoked`: API key revoked
+     */
+    401: Problem;
+    /**
+     * `scope_missing`: API key is missing a required scope; `account_suspended`: Account suspended
+     */
+    403: Problem;
+    /**
+     * `not_found`: Not found
+     */
+    404: Problem;
+    /**
+     * `rate_limited`: Rate limit exceeded
+     */
+    429: Problem;
+};
+
+export type ListBulkJobsError = ListBulkJobsErrors[keyof ListBulkJobsErrors];
+
+export type ListBulkJobsResponses = {
+    /**
+     * Successful Response
+     */
+    200: BulkJobsPublic;
+};
+
+export type ListBulkJobsResponse = ListBulkJobsResponses[keyof ListBulkJobsResponses];
+
+export type UploadBulkFileData = {
+    body: {
+        /**
+         * A UTF-8 CSV file, at most 20 MB
+         */
+        file: Blob | File;
+        kind?: 'email' | 'ip' | 'phone';
+        /**
+         * Phone jobs: the ISO 3166-1 alpha-2 country of numbers written without +
+         */
+        country?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/bulk';
+};
+
+export type UploadBulkFileErrors = {
+    /**
+     * `test_input_required`: Test keys answer test inputs only
+     */
+    400: Problem;
+    /**
+     * `invalid_api_key`: Invalid API key; `key_revoked`: API key revoked
+     */
+    401: Problem;
+    /**
+     * `scope_missing`: API key is missing a required scope; `account_suspended`: Account suspended
+     */
+    403: Problem;
+    /**
+     * `not_found`: Not found
+     */
+    404: Problem;
+    /**
+     * `payload_too_large`: Request body too large
+     */
+    413: Problem;
+    /**
+     * `validation_error`: Request validation failed
+     */
+    422: Problem;
+    /**
+     * `rate_limited`: Rate limit exceeded
+     */
+    429: Problem;
+    /**
+     * `upstream_unavailable`: Service temporarily unavailable
+     */
+    503: Problem;
+};
+
+export type UploadBulkFileError = UploadBulkFileErrors[keyof UploadBulkFileErrors];
+
+export type UploadBulkFileResponses = {
+    /**
+     * Successful Response
+     */
+    201: BulkJobPublic;
+};
+
+export type UploadBulkFileResponse = UploadBulkFileResponses[keyof UploadBulkFileResponses];
+
+export type GetBulkJobData = {
+    body?: never;
+    path: {
+        /**
+         * Job Id
+         */
+        job_id: string;
+    };
+    query?: never;
+    url: '/v1/bulk/{job_id}';
+};
+
+export type GetBulkJobErrors = {
+    /**
+     * `test_input_required`: Test keys answer test inputs only
+     */
+    400: Problem;
+    /**
+     * `invalid_api_key`: Invalid API key; `key_revoked`: API key revoked
+     */
+    401: Problem;
+    /**
+     * `scope_missing`: API key is missing a required scope; `account_suspended`: Account suspended
+     */
+    403: Problem;
+    /**
+     * `not_found`: Not found
+     */
+    404: Problem;
+    /**
+     * `validation_error`: Request validation failed
+     */
+    422: Problem;
+    /**
+     * `rate_limited`: Rate limit exceeded
+     */
+    429: Problem;
+};
+
+export type GetBulkJobError = GetBulkJobErrors[keyof GetBulkJobErrors];
+
+export type GetBulkJobResponses = {
+    /**
+     * Successful Response
+     */
+    200: BulkJobPublic;
+};
+
+export type GetBulkJobResponse = GetBulkJobResponses[keyof GetBulkJobResponses];
+
+export type StartBulkJobData = {
+    /**
+     * Body
+     */
+    body?: BulkApiStart | null;
+    path: {
+        /**
+         * Job Id
+         */
+        job_id: string;
+    };
+    query?: never;
+    url: '/v1/bulk/{job_id}/start';
+};
+
+export type StartBulkJobErrors = {
+    /**
+     * `test_input_required`: Test keys answer test inputs only
+     */
+    400: Problem;
+    /**
+     * `invalid_api_key`: Invalid API key; `key_revoked`: API key revoked
+     */
+    401: Problem;
+    /**
+     * `insufficient_credits`: Insufficient credits
+     */
+    402: Problem;
+    /**
+     * `scope_missing`: API key is missing a required scope; `account_suspended`: Account suspended; `tier_required`: This feature requires a purchase
+     */
+    403: Problem;
+    /**
+     * `not_found`: Not found
+     */
+    404: Problem;
+    /**
+     * `job_state`: The bulk job cannot do this now
+     */
+    409: Problem;
+    /**
+     * `validation_error`: Request validation failed
+     */
+    422: Problem;
+    /**
+     * `rate_limited`: Rate limit exceeded
+     */
+    429: Problem;
+};
+
+export type StartBulkJobError = StartBulkJobErrors[keyof StartBulkJobErrors];
+
+export type StartBulkJobResponses = {
+    /**
+     * Successful Response
+     */
+    200: BulkJobPublic;
+};
+
+export type StartBulkJobResponse = StartBulkJobResponses[keyof StartBulkJobResponses];
+
+export type CancelBulkJobData = {
+    body?: never;
+    path: {
+        /**
+         * Job Id
+         */
+        job_id: string;
+    };
+    query?: never;
+    url: '/v1/bulk/{job_id}/cancel';
+};
+
+export type CancelBulkJobErrors = {
+    /**
+     * `test_input_required`: Test keys answer test inputs only
+     */
+    400: Problem;
+    /**
+     * `invalid_api_key`: Invalid API key; `key_revoked`: API key revoked
+     */
+    401: Problem;
+    /**
+     * `scope_missing`: API key is missing a required scope; `account_suspended`: Account suspended
+     */
+    403: Problem;
+    /**
+     * `not_found`: Not found
+     */
+    404: Problem;
+    /**
+     * `job_state`: The bulk job cannot do this now
+     */
+    409: Problem;
+    /**
+     * `validation_error`: Request validation failed
+     */
+    422: Problem;
+    /**
+     * `rate_limited`: Rate limit exceeded
+     */
+    429: Problem;
+};
+
+export type CancelBulkJobError = CancelBulkJobErrors[keyof CancelBulkJobErrors];
+
+export type CancelBulkJobResponses = {
+    /**
+     * Successful Response
+     */
+    200: BulkJobPublic;
+};
+
+export type CancelBulkJobResponse = CancelBulkJobResponses[keyof CancelBulkJobResponses];
+
+export type DownloadBulkResultData = {
+    body?: never;
+    path: {
+        /**
+         * Job Id
+         */
+        job_id: string;
+    };
+    query?: never;
+    url: '/v1/bulk/{job_id}/result';
+};
+
+export type DownloadBulkResultErrors = {
+    /**
+     * `test_input_required`: Test keys answer test inputs only
+     */
+    400: Problem;
+    /**
+     * `invalid_api_key`: Invalid API key; `key_revoked`: API key revoked
+     */
+    401: Problem;
+    /**
+     * `scope_missing`: API key is missing a required scope; `account_suspended`: Account suspended
+     */
+    403: Problem;
+    /**
+     * `not_found`: Not found
+     */
+    404: Problem;
+    /**
+     * `validation_error`: Request validation failed
+     */
+    422: Problem;
+    /**
+     * `rate_limited`: Rate limit exceeded
+     */
+    429: Problem;
+};
+
+export type DownloadBulkResultError = DownloadBulkResultErrors[keyof DownloadBulkResultErrors];
+
+export type DownloadBulkResultResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};

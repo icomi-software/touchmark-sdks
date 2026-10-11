@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Touchmark API",
-    "description": "\nValidate email addresses: syntax, DNS/MX, disposable and free-provider domains, role\naccounts and typo suggestions. Verify that a mailbox exists by asking its mail server.\nCheck a sending domain's DNS against the Gmail, Yahoo and Microsoft bulk-sender rules.\nLook up an IP address: country, network owner, hosting or cloud company and Tor exit.\nCheck a phone number against its country's numbering plan: format, country, line type\nand original carrier.\n\n## Authentication\nSend your API key as a bearer token: `Authorization: Bearer vld_live_…`. Create keys\nin the dashboard.\n\n## Credits\nOne balance pays for every endpoint. `POST /v1/email/validate` costs 1 credit;\n`POST /v1/email/validate/batch` costs 1 credit per address (up to 100);\n`POST /v1/email/verify` costs 5 credits, or 1 when the result is `unknown` or the\naddress is invalid before the mailbox check; `POST /v1/domain/sender-readiness` costs\n2 credits; `POST /v1/ip/lookup` costs 1 credit, and `POST /v1/ip/lookup/batch` 1 credit\nper address (up to 100); `POST /v1/phone/validate` costs 1 credit, and\n`POST /v1/phone/validate/batch` 1 credit per number (up to 100). Every paid response\ncarries the remaining balance in `X-Credits-Remaining`.\n\n## Rate limits\nResponses carry `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`.\nA `429` response includes `Retry-After`.\n\n## Results and reasons\nEvery validation has one `result`. When several apply, the first in this list wins\n(`invalid` > `unknown` > `risky` > `valid`):\n\n- `invalid`: the address cannot receive mail. Its syntax is rejected, or its domain\n  does not exist, publishes a null MX or has no mail records.\n- `unknown`: DNS gave no definite answer (server failure, refusal or timeout). Try\n  again later.\n- `risky`: the domain accepts mail but belongs to a disposable-email provider.\n- `valid`: the domain accepts mail and no risk flags apply.\n\n`valid` from `validate` means the domain accepts mail and no risk flags apply. It does\n**not** mean the mailbox exists: `validate` never contacts the mail server, so\n`checks.mailbox.status` is `not_checked`.\n\n`reasons` lists every rule that matched:\n\n- `invalid_syntax`: the address fails the syntax policy. Quoted local parts, IP\n  literals and single-label domains are rejected even where the RFCs allow them.\n- `domain_not_found`: the domain does not exist (NXDOMAIN).\n- `null_mx`: the domain publishes a null MX record (RFC 7505), so it accepts no mail.\n- `no_mail_records`: the domain has neither an MX record nor an A or AAAA record.\n- `dns_error`: the DNS lookup failed (server failure, refusal or timeout). The result\n  is `unknown`, never `invalid`.\n- `implicit_mx`: the domain has no MX record, so mail goes to its A or AAAA record.\n  The domain still accepts mail.\n- `disposable`: the domain, or a parent domain, belongs to a disposable-email\n  provider. The result is `risky`.\n- `free_provider`: the domain is a free email provider such as gmail.com. It does not\n  change the result.\n- `role_account`: the local part names a role, such as `info` or `support`, rather\n  than a person (a `+tag` is ignored). It does not change the result.\n\nChanges within `/v1` are additive: new fields and new reason codes may appear.\nClients must ignore unknown fields and unknown reason codes.\n\n`datasets` gives the version of each domain list (`disposable`, `free_provider`) that\nproduced the flags. The values are opaque version identifiers: compare them for\nequality, but do not parse them.\n\n## Mailbox verification\n`POST /v1/email/verify` runs the `validate` checks and then asks the address's mail\nserver whether the mailbox exists. It needs the `email:verify` scope and a completed\npurchase (`403 tier_required` otherwise), and an account may submit 10 per second.\nThe mail server is never sent a message.\n\nWhen the answer is known at once (the address is invalid, the mailbox was checked\nrecently, or the check cannot run) the call returns `200` with `status: \"done\"` and\n`id: null`. Otherwise it returns `202` with an `id`, `status: \"queued\"`, the `validate`\nresult and `checks.mailbox.status` `pending`; 5 credits are charged, and 4 come back if\nthe check ends `unknown`. `GET /v1/email/verify/{id}` returns the check for free; with\n`?wait=N` (up to 10) it waits that many seconds for the check to finish. A server that\nasks to try again later is retried after 10 and 30 minutes. Results are kept for 7\ndays; once the check is done, `email`, `normalized` and `did_you_mean` are null, because\nthe address itself is not kept.\n\n`checks.mailbox.status` is `exists`, `not_exists`, `catch_all` (the domain accepts mail\nfor any address), `unknown`, `pending`, or `not_checked` (the `validate` checks already\ndecided: the address is invalid, or DNS gave no answer). `not_exists` makes the result\n`invalid` and adds the reason `mailbox_not_found`; `catch_all` makes it `risky` and adds\n`catch_all`. An `unknown` mailbox makes the result `unknown`, and its reason appears in\n`checks.mailbox.reason` and in `reasons`:\n\n- `greylisted`: the server kept asking us to try again later.\n- `connection_failed`: no mail server of the domain could be reached.\n- `no_ipv4_server`: the domain's mail servers have no public IPv4 address, and mailbox\n  checks use IPv4 only.\n- `probe_blocked`: the server refused the check itself.\n- `provider_unverifiable`: the provider accepts every address (Microsoft 365), or the\n  server cannot take this address, so no answer would be meaningful; or its mail server\n  offered TLS and then failed it, and we do not fall back to plaintext.\n- `capacity_exceeded`: today's mailbox-check capacity is used up.\n- `domain_limit`: this account checked 200 addresses at this domain today.\n- `account_limit`: this account reached the daily limit of mailbox checks set in the\n  dashboard's Settings.\n- `smtp_unavailable`: mailbox checks are paused on our side.\n\n## Sender readiness\n`POST /v1/domain/sender-readiness` checks the DNS side of the bulk-sender rules: SPF\n(one record, at most 10 DNS lookups, not `+all`), DKIM (a key under a common selector\nor one you pass in `dkim_selectors`) and DMARC (`p` of `none`, `quarantine` or\n`reject`). It also reports MX, MTA-STS, TLS-RPT and BIMI records. `dns_ready` gives\n`pass`, `warn` or `fail` for Gmail, Yahoo and Microsoft, and `gaps` says what to fix.\nDNS cannot show complaint rates, one-click unsubscribe or DMARC alignment in practice,\nso `not_checked` lists them. When DNS lookups fail, the call returns\n`503 upstream_unavailable` and costs nothing. After 10 such answers in 10 minutes an\naccount gets `429 rate_limited` with `Retry-After`.\n\n## IP lookup\n`POST /v1/ip/lookup` takes one IPv4 or IPv6 address; `POST /v1/ip/lookup/batch` takes\nup to 100 and answers in input order. They need the `ip:lookup` scope. A value that is\nnot an address is `422 validation_error` for the whole call, and nothing is charged.\nEvery answer comes from datasets held on our servers; the address is not sent anywhere.\n\n- `country` and `continent` are a geolocation estimate at country level, from\n  [IP Geolocation by DB-IP](https://db-ip.com). If you display them, keep that credit\n  next to them.\n- `asn` is the autonomous system that announces the address (DB-IP).\n- `network` is `{\"type\": \"hosting\", \"provider\": …}` when the address belongs to the\n  autonomous system of a hosting or cloud company (for example `aws`, `gcp`, `ovh`,\n  `hetzner`), from our own list; `null` means it is not on that list, not that the\n  address is residential.\n- `tor_exit` says whether the address is a Tor exit (Tor Project list). It is `null`\n  for IPv6: the list holds IPv4 exits only.\n- `scope` is `global` for a public address. Private, shared (CGNAT), loopback,\n  link-local, multicast, unspecified and reserved addresses get their scope and no\n  other data, and still cost 1 credit.\n- `datasets` gives the version of each dataset read, or `null` for one not loaded yet.\n\n## Phone validation\n`POST /v1/phone/validate` takes one phone number; `POST /v1/phone/validate/batch` takes\nup to 100 and answers in input order. They need the `phone:validate` scope. Write\nnumbers in international form (`+44 20 7946 0000`), or pass `country` (an ISO 3166-1\nalpha-2 code) for numbers written without `+`. Any string is answered and costs 1\ncredit; a malformed request (an empty `phone`, a number longer than 64 characters, an unknown `country`)\nis `422 validation_error`, and nothing is charged. Every answer comes from Google's\nlibphonenumber numbering-plan data held on our servers; the number is not sent anywhere.\n\n- `valid` means the number fits its country's numbering plan. It does not mean the\n  number is assigned, in service or reachable. `reason` says why a number is not\n  valid: `not_a_number`, `no_country_code` (written without `+` and no `country`\n  given), `invalid_country_code`, `too_short`, `too_long`, `invalid_length` or\n  `not_in_plan`.\n- `type` is the line type from the numbering plan. The North American plan (the United\n  States, Canada and much of the Caribbean) does not separate mobile numbers, so its\n  numbers are `fixed_line_or_mobile`.\n- `original_carrier` is the network the number range was first allocated to. Numbers\n  move between networks, so it is not necessarily the current one. It is `null` for\n  most landlines and North American numbers.\n- `region` is the area of a landline range, such as a city. It describes the number\n  range, not where anyone is.\n- `country` is `null` for a number that is not valid and for non-geographic numbers\n  (such as `+800`).\n- `datasets` gives the version of the numbering-plan data used.\n\n## Errors\nErrors are RFC 9457 `application/problem+json` documents with a stable `code`.\nSee the [error reference](/docs/errors).\n\n## MCP server\nAI agents can call these checks as tools through the MCP server at `https://api.touchmark.dev/mcp`\n(Streamable HTTP). Send your API key as for any other call:\n`Authorization: Bearer vld_live_…`. Each tool calls the endpoint above it stands\nfor and costs the same credits, with the same scopes and limits: `validate_email`\n(1), `verify_email` (up to 5; waits up to about 25 seconds, then returns the\ncheck's `id`), `get_email_verification` (free), `check_sender_readiness` (2),\n`lookup_ip` (1), `validate_phone` (1) and `get_account` (free).\n\nClaude Code:\n`claude mcp add --transport http touchmark https://api.touchmark.dev/mcp --header \"Authorization: Bearer vld_live_…\"`\n\nCursor (`~/.cursor/mcp.json`):\n`{\"mcpServers\": {\"touchmark\": {\"url\": \"https://api.touchmark.dev/mcp\", \"headers\": {\"Authorization\": \"Bearer vld_live_…\"}}}}`\n\nVS Code (`.vscode/mcp.json`):\n`{\"servers\": {\"touchmark\": {\"type\": \"http\", \"url\": \"https://api.touchmark.dev/mcp\", \"headers\": {\"Authorization\": \"Bearer vld_live_…\"}}}}`\n\n## SDKs\nOfficial client libraries for TypeScript and Python, under the MIT licence:\n[github.com/marcin-marciszewski/touchmark-sdks](https://github.com/marcin-marciszewski/touchmark-sdks).\n\n- TypeScript: `npm install touchmark`, then\n  `const tm = new Touchmark({ apiKey: process.env.TOUCHMARK_API_KEY })` and\n  `await tm.email.validate({ email: \"jane@acme.com\" })`.\n- Python: `pip install touchmark`, then `tm = Touchmark()` (reads\n  `TOUCHMARK_API_KEY`) and `tm.email.validate(email=\"jane@acme.com\")`.\n\n## Terms\nUse of the API is subject to the [Terms of Service](https://touchmark.dev/legal/terms)\nand the [Acceptable Use Policy](https://touchmark.dev/legal/acceptable-use).\n",
+    "description": "\nValidate email addresses: syntax, DNS/MX, disposable and free-provider domains, role\naccounts and typo suggestions. Verify that a mailbox exists by asking its mail server.\nCheck a sending domain's DNS against the Gmail, Yahoo and Microsoft bulk-sender rules.\nLook up an IP address: country, network owner, hosting or cloud company and Tor exit.\nCheck a phone number against its country's numbering plan: format, country, line type\nand original carrier.\n\n## Authentication\nSend your API key as a bearer token: `Authorization: Bearer vld_live_…`. Create keys\nin the dashboard.\n\n## Credits\nOne balance pays for every endpoint. `POST /v1/email/validate` costs 1 credit;\n`POST /v1/email/validate/batch` costs 1 credit per address (up to 100);\n`POST /v1/email/verify` costs 5 credits, or 1 when the result is `unknown` or the\naddress is invalid before the mailbox check; `POST /v1/domain/sender-readiness` costs\n2 credits; `POST /v1/ip/lookup` costs 1 credit, and `POST /v1/ip/lookup/batch` 1 credit\nper address (up to 100); `POST /v1/phone/validate` costs 1 credit, and\n`POST /v1/phone/validate/batch` 1 credit per number (up to 100). A bulk job\n(`/v1/bulk`) reserves the most it can cost when it starts and gives the unused credits\nback when it ends. Every paid response\ncarries the remaining balance in `X-Credits-Remaining`.\n\n## Rate limits\nResponses carry `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`.\nA `429` response includes `Retry-After`.\n\n## Retries\nSend an `Idempotency-Key` header (1 to 255 visible ASCII characters, for example a\nUUID) with any paid `POST` (except the bulk routes) to retry it safely. A retry with the same key and body\nwithin 24 hours is not charged again: the check runs again and the answer carries\n`Idempotent-Replayed: true`, the first call's `credits_charged`, and your current\nbalance. A retry of `POST /v1/email/verify` returns the same mailbox check instead of\nstarting another, with that check's current credits (1 after an `unknown` refund). A\nkey can be retried 10 times. The same key with another body answers `422 idempotency_key_reused`;\nwhile the first call still runs, `409 idempotency_key_in_use`. Responses are not\nstored: they contain the addresses and numbers you sent. The bulk routes do not take\nan `Idempotency-Key`: repeating a start answers `409 job_state`, and repeating an upload\ncreates another job.\n\n## Test keys\nA test key (`vld_test_…`, created in the dashboard) is free and needs no credits. It\nanswers only the inputs below, with fixed answers in the live format,\n`credits_charged` 0 and the header `Touchmark-Test-Mode: true`; any other input answers\n`400 test_input_required`. Use it in your tests and CI.\n\n- Email: `valid@example.com`, `invalid@example.com`, `disposable@example.com`,\n  `role@example.com`, `unknown@example.com` and `typo@gmial.com`. For\n  `POST /v1/email/verify` also `mailbox-missing@example.com` and\n  `catch-all@example.com`; test mailbox checks are answered at once.\n- Sending domains: `ready.example.com` and `not-ready.example.com`.\n- IP addresses: `192.0.2.1`, `198.51.100.1` (hosting), `203.0.113.1` (Tor exit) and\n  `2001:db8::1`.\n- Phone numbers: `+12015550123` and `+16135550199` (valid), `+447700900123` and\n  `+15550000000` (invalid).\n\nA batch with one non-test item is refused whole. `GET /v1/email/verify/{id}` answers 404\nto a test key, as test verifications are never stored. `X-Credits-Remaining` shows the\nreal balance.\n\n## Results and reasons\nEvery validation has one `result`. When several apply, the first in this list wins\n(`invalid` > `unknown` > `risky` > `valid`):\n\n- `invalid`: the address cannot receive mail. Its syntax is rejected, or its domain\n  does not exist, publishes a null MX or has no mail records.\n- `unknown`: DNS gave no definite answer (server failure, refusal or timeout). Try\n  again later.\n- `risky`: the domain accepts mail but belongs to a disposable-email provider.\n- `valid`: the domain accepts mail and no risk flags apply.\n\n`valid` from `validate` means the domain accepts mail and no risk flags apply. It does\n**not** mean the mailbox exists: `validate` never contacts the mail server, so\n`checks.mailbox.status` is `not_checked`.\n\n`reasons` lists every rule that matched:\n\n- `invalid_syntax`: the address fails the syntax policy. Quoted local parts, IP\n  literals and single-label domains are rejected even where the RFCs allow them.\n- `domain_not_found`: the domain does not exist (NXDOMAIN).\n- `null_mx`: the domain publishes a null MX record (RFC 7505), so it accepts no mail.\n- `no_mail_records`: the domain has neither an MX record nor an A or AAAA record.\n- `dns_error`: the DNS lookup failed (server failure, refusal or timeout). The result\n  is `unknown`, never `invalid`.\n- `implicit_mx`: the domain has no MX record, so mail goes to its A or AAAA record.\n  The domain still accepts mail.\n- `disposable`: the domain, or a parent domain, belongs to a disposable-email\n  provider. The result is `risky`.\n- `free_provider`: the domain is a free email provider such as gmail.com. It does not\n  change the result.\n- `role_account`: the local part names a role, such as `info` or `support`, rather\n  than a person (a `+tag` is ignored). It does not change the result.\n\nChanges within `/v1` are additive: new fields and new reason codes may appear.\nClients must ignore unknown fields and unknown reason codes.\n\n`datasets` gives the version of each domain list (`disposable`, `free_provider`) that\nproduced the flags. The values are opaque version identifiers: compare them for\nequality, but do not parse them.\n\n## Mailbox verification\n`POST /v1/email/verify` runs the `validate` checks and then asks the address's mail\nserver whether the mailbox exists. It needs the `email:verify` scope and a completed\npurchase (`403 tier_required` otherwise), and an account may submit 10 per second.\nThe mail server is never sent a message.\n\nWhen the answer is known at once (the address is invalid, the mailbox was checked\nrecently, or the check cannot run) the call returns `200` with `status: \"done\"` and\n`id: null`. Otherwise it returns `202` with an `id`, `status: \"queued\"`, the `validate`\nresult and `checks.mailbox.status` `pending`; 5 credits are charged, and 4 come back if\nthe check ends `unknown`. `GET /v1/email/verify/{id}` returns the check for free; with\n`?wait=N` (up to 10) it waits that many seconds for the check to finish. A server that\nasks to try again later is retried after 10 and 30 minutes. Results are kept for 7\ndays; once the check is done, `email`, `normalized` and `did_you_mean` are null, because\nthe address itself is not kept.\n\n`checks.mailbox.status` is `exists`, `not_exists`, `catch_all` (the domain accepts mail\nfor any address), `unknown`, `pending`, or `not_checked` (the `validate` checks already\ndecided: the address is invalid, or DNS gave no answer). `not_exists` makes the result\n`invalid` and adds the reason `mailbox_not_found`; `catch_all` makes it `risky` and adds\n`catch_all`. An `unknown` mailbox makes the result `unknown`, and its reason appears in\n`checks.mailbox.reason` and in `reasons`:\n\n- `greylisted`: the server kept asking us to try again later.\n- `connection_failed`: no mail server of the domain could be reached.\n- `no_ipv4_server`: the domain's mail servers have no public IPv4 address, and mailbox\n  checks use IPv4 only.\n- `probe_blocked`: the server refused the check itself.\n- `provider_unverifiable`: the provider accepts every address (Microsoft 365), or the\n  server cannot take this address, so no answer would be meaningful; or its mail server\n  offered TLS and then failed it, and we do not fall back to plaintext.\n- `capacity_exceeded`: today's mailbox-check capacity is used up.\n- `domain_limit`: this account checked 200 addresses at this domain today.\n- `account_limit`: this account reached the daily limit of mailbox checks set in the\n  dashboard's Settings.\n- `smtp_unavailable`: mailbox checks are paused on our side.\n\n## Sender readiness\n`POST /v1/domain/sender-readiness` checks the DNS side of the bulk-sender rules: SPF\n(one record, at most 10 DNS lookups, not `+all`), DKIM (a key under a common selector\nor one you pass in `dkim_selectors`) and DMARC (`p` of `none`, `quarantine` or\n`reject`). It also reports MX, MTA-STS, TLS-RPT and BIMI records. `dns_ready` gives\n`pass`, `warn` or `fail` for Gmail, Yahoo and Microsoft, and `gaps` says what to fix.\nDNS cannot show complaint rates, one-click unsubscribe or DMARC alignment in practice,\nso `not_checked` lists them. When DNS lookups fail, the call returns\n`503 upstream_unavailable` and costs nothing. After 10 such answers in 10 minutes an\naccount gets `429 rate_limited` with `Retry-After`.\n\n## IP lookup\n`POST /v1/ip/lookup` takes one IPv4 or IPv6 address; `POST /v1/ip/lookup/batch` takes\nup to 100 and answers in input order. They need the `ip:lookup` scope. A value that is\nnot an address is `422 validation_error` for the whole call, and nothing is charged.\nEvery answer comes from datasets held on our servers; the address is not sent anywhere.\n\n- `country` and `continent` are a geolocation estimate at country level, from\n  [IP Geolocation by DB-IP](https://db-ip.com). If you display them, keep that credit\n  next to them.\n- `asn` is the autonomous system that announces the address (DB-IP).\n- `network` is `{\"type\": \"hosting\", \"provider\": …}` when the address belongs to the\n  autonomous system of a hosting or cloud company (for example `aws`, `gcp`, `ovh`,\n  `hetzner`), from our own list; `null` means it is not on that list, not that the\n  address is residential.\n- `tor_exit` says whether the address is a Tor exit (Tor Project list). It is `null`\n  for IPv6: the list holds IPv4 exits only.\n- `scope` is `global` for a public address. Private, shared (CGNAT), loopback,\n  link-local, multicast, unspecified and reserved addresses get their scope and no\n  other data, and still cost 1 credit.\n- `datasets` gives the version of each dataset read, or `null` for one not loaded yet.\n\n## Phone validation\n`POST /v1/phone/validate` takes one phone number; `POST /v1/phone/validate/batch` takes\nup to 100 and answers in input order. They need the `phone:validate` scope. Write\nnumbers in international form (`+44 20 7946 0000`), or pass `country` (an ISO 3166-1\nalpha-2 code) for numbers written without `+`. Any string is answered and costs 1\ncredit; a malformed request (an empty `phone`, a number longer than 64 characters, an unknown `country`)\nis `422 validation_error`, and nothing is charged. Every answer comes from Google's\nlibphonenumber numbering-plan data held on our servers; the number is not sent anywhere.\n\n- `valid` means the number fits its country's numbering plan. It does not mean the\n  number is assigned, in service or reachable. `reason` says why a number is not\n  valid: `not_a_number`, `no_country_code` (written without `+` and no `country`\n  given), `invalid_country_code`, `too_short`, `too_long`, `invalid_length` or\n  `not_in_plan`.\n- `type` is the line type from the numbering plan. The North American plan (the United\n  States, Canada and much of the Caribbean) does not separate mobile numbers, so its\n  numbers are `fixed_line_or_mobile`.\n- `original_carrier` is the network the number range was first allocated to. Numbers\n  move between networks, so it is not necessarily the current one. It is `null` for\n  most landlines and North American numbers.\n- `region` is the area of a landline range, such as a city. It describes the number\n  range, not where anyone is.\n- `country` is `null` for a number that is not valid and for non-geographic numbers\n  (such as `+800`).\n- `datasets` gives the version of the numbering-plan data used.\n\n## Bulk jobs\nFor lists too long for a batch call, upload a CSV file (at most 20 MB) with\n`POST /v1/bulk` as `multipart/form-data`: `file`, `kind` (`email`, `ip` or `phone`)\nand, for phone numbers written without `+`, `country`. The answer is the job and its\npre-flight: rows, unique values and the most it can cost; nothing is charged yet.\n`POST /v1/bulk/{id}/start` reserves that amount and queues the job (send\n`{\"email_column\": n}` when the email column was not detected, and `{\"smtp\": true}`\nto verify mailboxes, which needs the `email:verify` scope). Poll `GET /v1/bulk/{id}`\nuntil `status` is `completed`, then download `GET /v1/bulk/{id}/result`. Unused credits\ncome back when the job ends. Each call needs the scope of the job's kind. A job in\nthe wrong state for a call answers `409 job_state`. The dashboard lists the same jobs.\nTest keys cannot run bulk jobs.\n\n### Webhooks\nStart a job with `{\"webhook_url\": \"https://…\"}` (an `https` URL whose host is a name,\nnot an IP address, and resolves to public addresses) and Touchmark POSTs an event to it when the job ends:\n`{\"id\": …, \"type\": \"bulk_job.completed\", \"created_at\": …, \"data\": <the job>}`, with\n`bulk_job.failed` and `bulk_job.cancelled` for the other endings. Answer with any\n`2xx` within 10 seconds. A failed delivery is retried, with the same body and\n`Touchmark-Event-Id`, 1, 5 and 15 minutes and 1, 3, 6 and 12 hours after the job\nended; the job's `webhook` part shows the attempts and the last error. Redirects are\nnot followed.\n\nEach event carries `Touchmark-Signature: t=<unix seconds>,v1=<hex>`. Check it with\nyour signing secret (Settings → Webhooks in the dashboard): compute HMAC-SHA256 with\nthe whole `whsec_…` string, as UTF-8 bytes, as the key over\n`<t>.<raw body>`, compare it with `v1` (lowercase hex) in constant time,\nand refuse events whose `t` is more than 5 minutes old.\n\n## Errors\nErrors are RFC 9457 `application/problem+json` documents with a stable `code`.\nSee the [error reference](/docs/errors).\n\n## MCP server\nAI agents can call these checks as tools through the MCP server at `https://api.touchmark.dev/mcp`\n(Streamable HTTP). Send your API key as for any other call:\n`Authorization: Bearer vld_live_…`. Each tool calls the endpoint above it stands\nfor and costs the same credits, with the same scopes and limits: `validate_email`\n(1), `verify_email` (up to 5; waits up to about 25 seconds, then returns the\ncheck's `id`), `get_email_verification` (free), `check_sender_readiness` (2),\n`lookup_ip` (1), `validate_phone` (1) and `get_account` (free).\n\nClaude Code:\n`claude mcp add --transport http touchmark https://api.touchmark.dev/mcp --header \"Authorization: Bearer vld_live_…\"`\n\nCursor (`~/.cursor/mcp.json`):\n`{\"mcpServers\": {\"touchmark\": {\"url\": \"https://api.touchmark.dev/mcp\", \"headers\": {\"Authorization\": \"Bearer vld_live_…\"}}}}`\n\nVS Code (`.vscode/mcp.json`):\n`{\"servers\": {\"touchmark\": {\"type\": \"http\", \"url\": \"https://api.touchmark.dev/mcp\", \"headers\": {\"Authorization\": \"Bearer vld_live_…\"}}}}`\n\nclaude.ai and ChatGPT: add a custom connector with the URL `https://api.touchmark.dev/mcp`, then sign in to\nTouchmark and allow it. The connector gets its own API key (\"<client> (MCP\nconnector)\"); revoke that key on the API keys page to disconnect it.\n\n## SDKs\nOfficial client libraries for TypeScript, Python and Go, under the MIT licence:\n[github.com/icomi-software/touchmark-sdks](https://github.com/icomi-software/touchmark-sdks).\n\n- TypeScript: `npm install touchmark`, then\n  `const tm = new Touchmark({ apiKey: process.env.TOUCHMARK_API_KEY })` and\n  `await tm.email.validate({ email: \"jane@acme.com\" })`.\n- Python: `pip install touchmark`, then `tm = Touchmark()` (reads\n  `TOUCHMARK_API_KEY`) and `tm.email.validate(email=\"jane@acme.com\")`.\n- Go: `go get github.com/icomi-software/touchmark-sdks/go`, then\n  `tm, err := touchmark.New(touchmark.Options{})` (reads `TOUCHMARK_API_KEY`) and\n  `tm.Email.Validate(ctx, touchmark.ValidateRequest{Email: \"jane@acme.com\"})`.\n\nEach charged call sends an `Idempotency-Key`, so the SDKs retry network errors and\n`5xx` answers without charging twice.\n\n## Terms\nUse of the API is subject to the [Terms of Service](https://touchmark.dev/legal/terms)\nand the [Acceptable Use Policy](https://touchmark.dev/legal/acceptable-use).\n\n## Status\nCurrent availability and past incidents: <https://status.touchmark.dev/>.\n",
     "version": "1"
   },
   "paths": {
@@ -105,15 +105,40 @@
         "summary": "Validate one email address",
         "description": "Syntax, DNS/MX, disposable, free-provider, role-account and typo checks. Costs 1 credit.",
         "operationId": "validate_email",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again.",
+              "title": "Idempotency-Key"
+            },
+            "description": "Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again."
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ValidateRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -126,6 +151,16 @@
               }
             }
           },
+          "400": {
+            "description": "`invalid_idempotency_key`: Invalid Idempotency-Key; `test_input_required`: Test keys answer test inputs only",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "401": {
             "description": "`invalid_api_key`: Invalid API key; `key_revoked`: API key revoked",
             "content": {
@@ -156,6 +191,16 @@
               }
             }
           },
+          "409": {
+            "description": "`idempotency_key_in_use`: Idempotency-Key in use",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "413": {
             "description": "`payload_too_large`: Request body too large",
             "content": {
@@ -167,7 +212,7 @@
             }
           },
           "422": {
-            "description": "`validation_error`: Request validation failed",
+            "description": "`validation_error`: Request validation failed; `idempotency_key_reused`: Idempotency-Key reused",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -196,12 +241,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "ApiKey": []
-          }
-        ]
+        }
       }
     },
     "/v1/email/validate/batch": {
@@ -212,15 +252,40 @@
         "summary": "Validate up to 100 email addresses",
         "description": "Results are returned in input order. Costs 1 credit per address.",
         "operationId": "validate_email_batch",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again.",
+              "title": "Idempotency-Key"
+            },
+            "description": "Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again."
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/BatchValidateRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -233,6 +298,16 @@
               }
             }
           },
+          "400": {
+            "description": "`invalid_idempotency_key`: Invalid Idempotency-Key; `test_input_required`: Test keys answer test inputs only",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "401": {
             "description": "`invalid_api_key`: Invalid API key; `key_revoked`: API key revoked",
             "content": {
@@ -263,6 +338,16 @@
               }
             }
           },
+          "409": {
+            "description": "`idempotency_key_in_use`: Idempotency-Key in use",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "413": {
             "description": "`payload_too_large`: Request body too large",
             "content": {
@@ -274,7 +359,7 @@
             }
           },
           "422": {
-            "description": "`validation_error`: Request validation failed",
+            "description": "`validation_error`: Request validation failed; `idempotency_key_reused`: Idempotency-Key reused",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -303,12 +388,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "ApiKey": []
-          }
-        ]
+        }
       }
     },
     "/v1/email/verify": {
@@ -319,15 +399,40 @@
         "summary": "Verify one email address, including its mailbox",
         "description": "The validate checks, then the mail server is asked whether the mailbox exists.\n\nCosts 5 credits, or 1 when the result is `unknown` or the address is invalid\nbefore the mailbox check. A `202` means the check runs in the background:\nthe 5 credits are charged now, and 4 come back if it ends `unknown`.",
         "operationId": "verify_email",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again.",
+              "title": "Idempotency-Key"
+            },
+            "description": "Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again."
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ValidateRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -346,6 +451,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/VerifyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_idempotency_key`: Invalid Idempotency-Key; `test_input_required`: Test keys answer test inputs only",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             }
@@ -380,6 +495,16 @@
               }
             }
           },
+          "409": {
+            "description": "`idempotency_key_in_use`: Idempotency-Key in use",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "413": {
             "description": "`payload_too_large`: Request body too large",
             "content": {
@@ -391,7 +516,7 @@
             }
           },
           "422": {
-            "description": "`validation_error`: Request validation failed",
+            "description": "`validation_error`: Request validation failed; `idempotency_key_reused`: Idempotency-Key reused",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -420,12 +545,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "ApiKey": []
-          }
-        ]
+        }
       }
     },
     "/v1/email/verify/{verification_id}": {
@@ -549,15 +669,40 @@
         "summary": "Check a sending domain against the bulk-sender DNS rules",
         "description": "SPF, DKIM and DMARC against the Gmail, Yahoo and Microsoft bulk-sender rules,\nplus MX, MTA-STS, TLS-RPT and BIMI. Costs 2 credits; nothing when DNS fails (503).",
         "operationId": "sender_readiness",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again.",
+              "title": "Idempotency-Key"
+            },
+            "description": "Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again."
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/SenderReadinessRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -570,6 +715,16 @@
               }
             }
           },
+          "400": {
+            "description": "`invalid_idempotency_key`: Invalid Idempotency-Key; `test_input_required`: Test keys answer test inputs only",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "401": {
             "description": "`invalid_api_key`: Invalid API key; `key_revoked`: API key revoked",
             "content": {
@@ -600,6 +755,16 @@
               }
             }
           },
+          "409": {
+            "description": "`idempotency_key_in_use`: Idempotency-Key in use",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "413": {
             "description": "`payload_too_large`: Request body too large",
             "content": {
@@ -611,7 +776,7 @@
             }
           },
           "422": {
-            "description": "`validation_error`: Request validation failed",
+            "description": "`validation_error`: Request validation failed; `idempotency_key_reused`: Idempotency-Key reused",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -640,12 +805,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "ApiKey": []
-          }
-        ]
+        }
       }
     },
     "/v1/ip/lookup": {
@@ -656,15 +816,40 @@
         "summary": "Look up one IP address",
         "description": "Country, ASN, network type and Tor exit. Costs 1 credit.",
         "operationId": "lookup_ip",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again.",
+              "title": "Idempotency-Key"
+            },
+            "description": "Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again."
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/LookupRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -677,6 +862,16 @@
               }
             }
           },
+          "400": {
+            "description": "`invalid_idempotency_key`: Invalid Idempotency-Key; `test_input_required`: Test keys answer test inputs only",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "401": {
             "description": "`invalid_api_key`: Invalid API key; `key_revoked`: API key revoked",
             "content": {
@@ -707,6 +902,16 @@
               }
             }
           },
+          "409": {
+            "description": "`idempotency_key_in_use`: Idempotency-Key in use",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "413": {
             "description": "`payload_too_large`: Request body too large",
             "content": {
@@ -718,7 +923,7 @@
             }
           },
           "422": {
-            "description": "`validation_error`: Request validation failed",
+            "description": "`validation_error`: Request validation failed; `idempotency_key_reused`: Idempotency-Key reused",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -747,12 +952,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "ApiKey": []
-          }
-        ]
+        }
       }
     },
     "/v1/ip/lookup/batch": {
@@ -763,15 +963,40 @@
         "summary": "Look up up to 100 IP addresses",
         "description": "Results are returned in input order. Costs 1 credit per address.",
         "operationId": "lookup_ip_batch",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again.",
+              "title": "Idempotency-Key"
+            },
+            "description": "Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again."
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/BatchLookupRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -784,6 +1009,16 @@
               }
             }
           },
+          "400": {
+            "description": "`invalid_idempotency_key`: Invalid Idempotency-Key; `test_input_required`: Test keys answer test inputs only",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "401": {
             "description": "`invalid_api_key`: Invalid API key; `key_revoked`: API key revoked",
             "content": {
@@ -814,6 +1049,16 @@
               }
             }
           },
+          "409": {
+            "description": "`idempotency_key_in_use`: Idempotency-Key in use",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "413": {
             "description": "`payload_too_large`: Request body too large",
             "content": {
@@ -825,7 +1070,7 @@
             }
           },
           "422": {
-            "description": "`validation_error`: Request validation failed",
+            "description": "`validation_error`: Request validation failed; `idempotency_key_reused`: Idempotency-Key reused",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -854,12 +1099,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "ApiKey": []
-          }
-        ]
+        }
       }
     },
     "/v1/phone/validate": {
@@ -870,15 +1110,40 @@
         "summary": "Validate one phone number",
         "description": "Numbering-plan validity, formats, country, line type. Costs 1 credit.",
         "operationId": "validate_phone",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again.",
+              "title": "Idempotency-Key"
+            },
+            "description": "Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again."
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/PhoneValidateRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -891,6 +1156,16 @@
               }
             }
           },
+          "400": {
+            "description": "`invalid_idempotency_key`: Invalid Idempotency-Key; `test_input_required`: Test keys answer test inputs only",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "401": {
             "description": "`invalid_api_key`: Invalid API key; `key_revoked`: API key revoked",
             "content": {
@@ -921,6 +1196,373 @@
               }
             }
           },
+          "409": {
+            "description": "`idempotency_key_in_use`: Idempotency-Key in use",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`payload_too_large`: Request body too large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_error`: Request validation failed; `idempotency_key_reused`: Idempotency-Key reused",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: Rate limit exceeded; `daily_cap_reached`: Daily call cap reached",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`upstream_unavailable`: Service temporarily unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/phone/validate/batch": {
+      "post": {
+        "tags": [
+          "Phone"
+        ],
+        "summary": "Validate up to 100 phone numbers",
+        "description": "Results are returned in input order. Costs 1 credit per number.",
+        "operationId": "validate_phone_batch",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again.",
+              "title": "Idempotency-Key"
+            },
+            "description": "Optional. 1 to 255 visible ASCII characters. A retry with the same key and body within 24 hours is not charged again."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PhoneBatchValidateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhoneBatchValidateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_idempotency_key`: Invalid Idempotency-Key; `test_input_required`: Test keys answer test inputs only",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`invalid_api_key`: Invalid API key; `key_revoked`: API key revoked",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "`insufficient_credits`: Insufficient credits",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`account_suspended`: Account suspended; `scope_missing`: API key is missing a required scope",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`idempotency_key_in_use`: Idempotency-Key in use",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`payload_too_large`: Request body too large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_error`: Request validation failed; `idempotency_key_reused`: Idempotency-Key reused",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: Rate limit exceeded; `daily_cap_reached`: Daily call cap reached",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`upstream_unavailable`: Service temporarily unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/bulk": {
+      "get": {
+        "tags": [
+          "Bulk jobs"
+        ],
+        "summary": "List bulk jobs",
+        "description": "The account's newest jobs of the kinds this key may run, newest first.",
+        "operationId": "list_bulk_jobs",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkJobsPublic"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`test_input_required`: Test keys answer test inputs only",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`invalid_api_key`: Invalid API key; `key_revoked`: API key revoked",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`scope_missing`: API key is missing a required scope; `account_suspended`: Account suspended",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: Rate limit exceeded",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Bulk jobs"
+        ],
+        "summary": "Upload a CSV file",
+        "description": "Upload a file and get its pre-flight: rows, unique values and the most it\ncan cost. Nothing is charged until the job starts.",
+        "operationId": "upload_bulk_file",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "A UTF-8 CSV file, at most 20 MB"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "email",
+                      "ip",
+                      "phone"
+                    ],
+                    "default": "email"
+                  },
+                  "country": {
+                    "type": "string",
+                    "description": "Phone jobs: the ISO 3166-1 alpha-2 country of numbers written without +"
+                  }
+                },
+                "type": "object",
+                "required": [
+                  "file"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkJobPublic"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`test_input_required`: Test keys answer test inputs only",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`invalid_api_key`: Invalid API key; `key_revoked`: API key revoked",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`scope_missing`: API key is missing a required scope; `account_suspended`: Account suspended",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "413": {
             "description": "`payload_too_large`: Request body too large",
             "content": {
@@ -942,7 +1584,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited`: Rate limit exceeded; `daily_cap_reached`: Daily call cap reached",
+            "description": "`rate_limited`: Rate limit exceeded",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -969,23 +1611,145 @@
         ]
       }
     },
-    "/v1/phone/validate/batch": {
+    "/v1/bulk/{job_id}": {
+      "get": {
+        "tags": [
+          "Bulk jobs"
+        ],
+        "summary": "Get a bulk job",
+        "operationId": "get_bulk_job",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkJobPublic"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`test_input_required`: Test keys answer test inputs only",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`invalid_api_key`: Invalid API key; `key_revoked`: API key revoked",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`scope_missing`: API key is missing a required scope; `account_suspended`: Account suspended",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_error`: Request validation failed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: Rate limit exceeded",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/bulk/{job_id}/start": {
       "post": {
         "tags": [
-          "Phone"
+          "Bulk jobs"
         ],
-        "summary": "Validate up to 100 phone numbers",
-        "description": "Results are returned in input order. Costs 1 credit per number.",
-        "operationId": "validate_phone_batch",
+        "summary": "Start a bulk job",
+        "description": "Reserve the most the job can cost and queue it. Unused credits come back\nwhen it ends.",
+        "operationId": "start_bulk_job",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PhoneBatchValidateRequest"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/BulkApiStart"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -993,7 +1757,17 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PhoneBatchValidateResponse"
+                  "$ref": "#/components/schemas/BulkJobPublic"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`test_input_required`: Test keys answer test inputs only",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             }
@@ -1019,7 +1793,7 @@
             }
           },
           "403": {
-            "description": "`account_suspended`: Account suspended; `scope_missing`: API key is missing a required scope",
+            "description": "`scope_missing`: API key is missing a required scope; `account_suspended`: Account suspended; `tier_required`: This feature requires a purchase",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1028,8 +1802,18 @@
               }
             }
           },
-          "413": {
-            "description": "`payload_too_large`: Request body too large",
+          "404": {
+            "description": "`not_found`: Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`job_state`: The bulk job cannot do this now",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1049,7 +1833,56 @@
             }
           },
           "429": {
-            "description": "`rate_limited`: Rate limit exceeded; `daily_cap_reached`: Daily call cap reached",
+            "description": "`rate_limited`: Rate limit exceeded",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/bulk/{job_id}/cancel": {
+      "post": {
+        "tags": [
+          "Bulk jobs"
+        ],
+        "summary": "Cancel a bulk job",
+        "description": "Cancel a job. A running job stops after its current chunk.",
+        "operationId": "cancel_bulk_job",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkJobPublic"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`test_input_required`: Test keys answer test inputs only",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1058,8 +1891,58 @@
               }
             }
           },
-          "503": {
-            "description": "`upstream_unavailable`: Service temporarily unavailable",
+          "401": {
+            "description": "`invalid_api_key`: Invalid API key; `key_revoked`: API key revoked",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`scope_missing`: API key is missing a required scope; `account_suspended`: Account suspended",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`job_state`: The bulk job cannot do this now",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_error`: Request validation failed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: Rate limit exceeded",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1068,12 +1951,102 @@
               }
             }
           }
-        },
+        }
+      }
+    },
+    "/v1/bulk/{job_id}/result": {
+      "get": {
+        "tags": [
+          "Bulk jobs"
+        ],
+        "summary": "Download a job's results",
+        "description": "The input rows with the result columns added, as CSV.",
+        "operationId": "download_bulk_result",
         "security": [
           {
             "ApiKey": []
           }
-        ]
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/csv": {}
+            }
+          },
+          "400": {
+            "description": "`test_input_required`: Test keys answer test inputs only",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`invalid_api_key`: Invalid API key; `key_revoked`: API key revoked",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`scope_missing`: API key is missing a required scope; `account_suspended`: Account suspended",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_error`: Request validation failed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: Rate limit exceeded",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
       }
     }
   },
@@ -1247,6 +2220,289 @@
           "request_id"
         ],
         "title": "BatchValidateResponse"
+      },
+      "BulkApiStart": {
+        "properties": {
+          "smtp": {
+            "type": "boolean",
+            "title": "Smtp",
+            "default": false
+          },
+          "smtp_limit": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Smtp Limit"
+          },
+          "email_column": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email Column"
+          },
+          "webhook_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webhook Url"
+          }
+        },
+        "type": "object",
+        "title": "BulkApiStart"
+      },
+      "BulkJobPublic": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "email",
+              "ip",
+              "phone"
+            ],
+            "title": "Kind"
+          },
+          "country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country",
+            "description": "A phone job's default country for numbers written without +."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "uploaded",
+              "ready",
+              "queued",
+              "running",
+              "completed",
+              "failed",
+              "cancelled",
+              "expired"
+            ],
+            "title": "Status"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "columns": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Columns"
+          },
+          "email_column": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email Column"
+          },
+          "row_count": {
+            "type": "integer",
+            "title": "Row Count"
+          },
+          "unique_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unique Count"
+          },
+          "credits_required": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credits Required"
+          },
+          "smtp_credits_required": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Smtp Credits Required"
+          },
+          "smtp": {
+            "type": "boolean",
+            "title": "Smtp"
+          },
+          "processed_rows": {
+            "type": "integer",
+            "title": "Processed Rows"
+          },
+          "credits_reserved": {
+            "type": "integer",
+            "title": "Credits Reserved"
+          },
+          "credits_used": {
+            "type": "integer",
+            "title": "Credits Used"
+          },
+          "cancel_requested": {
+            "type": "boolean",
+            "title": "Cancel Requested"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          },
+          "webhook_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webhook Url"
+          },
+          "webhook": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WebhookState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "country",
+          "status",
+          "filename",
+          "columns",
+          "email_column",
+          "row_count",
+          "unique_count",
+          "credits_required",
+          "smtp_credits_required",
+          "smtp",
+          "processed_rows",
+          "credits_reserved",
+          "credits_used",
+          "cancel_requested",
+          "error",
+          "created_at",
+          "started_at",
+          "finished_at",
+          "expires_at",
+          "webhook_url",
+          "webhook"
+        ],
+        "title": "BulkJobPublic"
+      },
+      "BulkJobsPublic": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/BulkJobPublic"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "count"
+        ],
+        "title": "BulkJobsPublic"
       },
       "CheckStatus": {
         "type": "string",
@@ -2784,6 +4040,44 @@
           "request_id"
         ],
         "title": "VerifyResponse"
+      },
+      "WebhookState": {
+        "properties": {
+          "delivered_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivered At"
+          },
+          "attempts": {
+            "type": "integer",
+            "title": "Attempts"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "delivered_at",
+          "attempts",
+          "last_error"
+        ],
+        "title": "WebhookState"
       },
       "Problem": {
         "description": "An RFC 9457 problem document: the body of every error response.",
